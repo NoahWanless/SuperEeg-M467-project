@@ -3,6 +3,9 @@ from scipy import signal
 import os
 from scipy.stats import kurtosis
 from scipy.io import loadmat
+import glob
+import pandas as pd
+import ants
 
 ############ NOTE: ############
 #  The function at the bottom: 
@@ -18,18 +21,17 @@ from scipy.io import loadmat
 #! BUT IT STILL WORKS IF YOU JUST COPY IT IN
 # give it the full directory path to the file with all the brains 
 def loadvoltdata(brains_volt_path): 
-    #column_names = ['aa', 'ap', 'ca', 'de', 'fp', 'ha', 'ja', 'jm', 'jt', 'mv','rn','rr','wc','zt']
     raw_volt_data = []
     raw_stim_data = []
-    with os.scandir(brains_volt_path) as entries:
-        for entry in entries: #for each brain
-            root, extension = os.path.splitext(entry.path) #to avoid any addition hidden files
-            if entry.is_file() and extension =='.mat':
-                volt_data = loadmat(entry.path)
-                raw_volt_data.append(volt_data['data'])
-                raw_stim_data.append(volt_data['stim'])
+    volt_paths = glob.glob(brains_volt_path+"/*.mat")
+    volt_paths.sort()
+    for path in volt_paths:
+        print(path)
+        volt_data = loadmat(path)
+        raw_volt_data.append(volt_data['data'])
+        raw_stim_data.append(volt_data['stim'])
+        
     return raw_volt_data, raw_stim_data
-
 
 
 ######## BUTTERWORTH NOTCH FILTER FUNCTION: ########
@@ -114,6 +116,46 @@ def preprocess_voltage(raw_voltage):
     node_filtered_volt = ensure_node_count(kurtosis_filtered_volt)
     return node_filtered_volt
 
+###### Gets the location of the electrodes after being normalized function: #######
+# brain_folder: path to the directory to the nii image of the brain
+# loc_folder: path to the directory to the location of the electrodes on the brain
+# This takes the electrode positions and switchs them to be on the normalized brain
+def get_normalize_brain_locs(brain_folder,loc_folder):
+    files_nii = glob.glob(brain_folder) #gets the folders
+    files_loc = glob.glob(loc_folder)
+    files_loc.sort() #shorts them so the lists are in the same order
+    files_nii.sort()
+    template_img_ants = ants.image_read(ants.get_ants_data('mni')) #gets the template image
+    iter = 0
+    normalized_locs = []
+    for brain_path,loc_path in zip(files_nii,files_loc): #so for each brain and its locations
+        raw_img_ants = ants.image_read(brain_path, reorient='IAL') #open brain image
+        electrode_locs = loadmat(loc_path, squeeze_me=True)
+        #transforms the brain
+        transformation = ants.registration( 
+            fixed=template_img_ants,
+            moving=raw_img_ants, 
+            type_of_transform='SyN',
+            verbose=False #make true opens information and stuff
+        )
+        #change the elctrode location format 
+        locs = np.asarray(electrode_locs["locs"], dtype=float).reshape(-1, 3)
+        pts = pd.DataFrame(locs, columns=["x", "y", "z"])
+        #transofrm the locations based on the transformation generated from the brain transformation
+        pts_mni_df = ants.apply_transforms_to_points(
+            dim=3,
+            points=pts,
+            transformlist=transformation["fwdtransforms"]
+        )
+        normalized_locs.append(pts_mni_df)
+        del transformation
+        print(f"We have normalized brain: {iter}")
+        iter +=1
+    numpy_list = []
+    for brain in normalized_locs: #takes the dataframes to numpy arrays in a list to return
+        numpy_list.append(brain.to_numpy())
+    return numpy_list
+
 
 
 
@@ -126,8 +168,11 @@ def load_loc(directory_path):
                 try:
                     electrodes = loadmat(entry.path)
                     locs = electrodes['locs']
+                    temp_loc = []
                     for point in locs:
-                        master_list.append(point)
+                        temp_loc.append(point)
+                        #master_list.append(point)
+                    master_list.append(temp_loc)
                 except:
                     print("some other file type was found")
     return master_list
