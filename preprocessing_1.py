@@ -161,6 +161,10 @@ def get_normalize_brain_locs(brain_folder,loc_folder):
 
 
 
+
+
+
+
 #! DO NOT USE, STILL UNDER CONSTRUCTION
 def load_loc(directory_path):
     master_list = []
