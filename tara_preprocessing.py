@@ -4,7 +4,7 @@ from pathlib import Path
 import scipy
 import ants
 import numpy as np
-from scipy.spatial.distance import cdist
+import scipy
 import pandas as pd
 from scipy.io import loadmat
 
@@ -101,6 +101,7 @@ def make_rbf_correlation_matrix(xyz_clean,dropped,mapping_clean):
     # Euclidean distance matrix (714x714)
     #dist_matrix = cdist(xyz_clean, xyz_clean, metric='euclidean')
     dist_matrix = scipy.spatial.distance.cdist(xyz_clean, xyz_clean, metric='euclidean')
+    
 
     # Gaussian RBF kernel: exp(-(epsilon * r)^2)
     rbf_matrix = np.exp(-dist_matrix**2 / 20)
