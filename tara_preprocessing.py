@@ -101,24 +101,19 @@ def make_rbf_correlation_matrix(xyz_clean,dropped,mapping_clean):
     # Euclidean distance matrix (714x714)
     #dist_matrix = cdist(xyz_clean, xyz_clean, metric='euclidean')
     dist_matrix = scipy.spatial.distance.cdist(xyz_clean, xyz_clean, metric='euclidean')
-    
-
     # Gaussian RBF kernel: exp(-(epsilon * r)^2)
     rbf_matrix = np.exp(-dist_matrix**2 / 20)
 
     correlation_matrices = []
     for i, matrix in enumerate(dropped): 
         # Get electrode indices for this patient
-        patient_electrode_indices = mapping_clean[mapping_clean[:, 1] == i, 0].astype(int)
-        
+        patient_electrode_indices = mapping_clean[mapping_clean[:, 1] == i, 0].astype(int)   
         # Compute pairwise correlation between this patient's electrodes
         corr = pd.DataFrame(matrix).corr() #^ COLLECT THESE FOR JUST THE PATIENT CORRELTAION MATRIX
         # shape: (n_patient_elec x n_patient_elec)
-
         # RBF weights between ALL 649 electrodes and this patient's electrodes
         # W shape: (714 x n_patient_elec)
         W = rbf_matrix[:, patient_electrode_indices]
-
         # Equation (6): Cˆ(x,y) = sum_ij W(x,i)*W(y,j)*z(C̄s(i,j))
         #                        / sum_ij W(x,i)*W(y,j)
         # Vectorized: numerator = W @ z_corr @ W.T  →  (714 x 714)
@@ -132,6 +127,29 @@ def make_rbf_correlation_matrix(xyz_clean,dropped,mapping_clean):
         correlation_matrices.append(C_hat)
     return correlation_matrices
 
+# All three inputs are part of the outputs of the full_preprocessing() function
+# xyz_clean: the normalized electrode locations cleaned out
+# dropped: the actual voltage data with certain electrodes removed
+# mapping_clean: this one i dont know
+# this returns the list of the patient correlation matrices but only of the size for the 
+# number of electrodes for that patients
+def make_patient_correlation_matrix(xyz_clean,dropped,mapping_clean):
+    #create RBF correlation matrix
+    # Euclidean distance matrix (714x714)
+    #dist_matrix = cdist(xyz_clean, xyz_clean, metric='euclidean')
+    dist_matrix = scipy.spatial.distance.cdist(xyz_clean, xyz_clean, metric='euclidean')
+    # Gaussian RBF kernel: exp(-(epsilon * r)^2)
+    rbf_matrix = np.exp(-dist_matrix**2 / 20)
+
+    correlation_matrices = []
+    for i, matrix in enumerate(dropped): 
+        # Get electrode indices for this patient
+        patient_electrode_indices = mapping_clean[mapping_clean[:, 1] == i, 0].astype(int)   
+        # Compute pairwise correlation between this patient's electrodes
+        corr = pd.DataFrame(matrix).corr() #^ COLLECT THESE FOR JUST THE PATIENT CORRELTAION MATRIX
+
+        correlation_matrices.append(corr)
+    return correlation_matrices
         
 
 
