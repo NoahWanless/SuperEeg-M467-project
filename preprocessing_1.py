@@ -161,11 +161,7 @@ def get_normalize_brain_locs(brain_folder,loc_folder):
 
 
 
-
-
-
-
-#! DO NOT USE, STILL UNDER CONSTRUCTION
+#! DO NOT USE, STILL UNDER CONSTRUCTION AND I DONT THINK I KNOW WHAT THIS THING IS SUPPOSED TO DO
 def load_loc(directory_path):
     master_list = []
     with os.scandir(directory_path) as entries:
