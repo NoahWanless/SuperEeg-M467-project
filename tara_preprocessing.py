@@ -112,7 +112,7 @@ def make_rbf_correlation_matrix(xyz_clean,dropped,mapping_clean):
         patient_electrode_indices = mapping_clean[mapping_clean[:, 1] == i, 0].astype(int)
         
         # Compute pairwise correlation between this patient's electrodes
-        corr = pd.DataFrame(matrix).corr()
+        corr = pd.DataFrame(matrix).corr() #^ COLLECT THESE FOR JUST THE PATIENT CORRELTAION MATRIX
         # shape: (n_patient_elec x n_patient_elec)
 
         # RBF weights between ALL 649 electrodes and this patient's electrodes
