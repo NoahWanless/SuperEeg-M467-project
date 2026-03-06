@@ -24,6 +24,7 @@ def get_electrode_normalized_loc(registered_dir = Path("../SuperEeg-M467-project
         
     xyz = np.vstack(ecogs_list_loc)  # 714 x 3, same order as mapping
     return xyz 
+
 ########### get_ecog_data: ###########
 # registered_dir: the directory where the regestered outputs are (ie the transformed electrode locations)
 # data_root: the directory where the voltage data lives
@@ -85,8 +86,8 @@ def full_preprocessing(ecogs,xyz):
     kept_global_indices = np.array(kept_global_indices) #!THIS MUST GET RETURNED FOR FUTURE USE
     xyz_clean = xyz[kept_global_indices]
 
-    print(xyz_clean.shape)        # (n_kept_electrodes, 3)
-    print(mapping_clean.shape)    # (n_kept_electrodes, 2)
+    #print(xyz_clean.shape)        # (n_kept_electrodes, 3)
+    #print(mapping_clean.shape)    # (n_kept_electrodes, 2)
     
     return xyz_clean, mapping_clean, kept_global_indices, cleaned
     #step three is remove patients with 2 electrodes or less, but we already know they all have way more then that
@@ -151,23 +152,6 @@ def make_patient_correlation_matrix(xyz_clean,dropped,mapping_clean):
         correlation_matrices.append(corr)
     return correlation_matrices
         
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
