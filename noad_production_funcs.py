@@ -1,0 +1,168 @@
+from pathlib import Path
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from itertools import combinations
+import networkx as nx
+from sklearn.neighbors import NearestNeighbors
+from tqdm import tqdm
+import torch
+import torch.nn.utils.parametrize as parametrize
+import geoopt
+
+
+
+"""
+from tara_preprocessing import full_preprocessing,make_rbf_correlation_matrix,get_just_ecog_data,get_electrode_normalized_loc,make_patient_correlation_matrix
+
+data_root = Path("/Users/noahwanless/Desktop/Spring2026/M467/faces_basic/data")
+registered_dir = Path("../SuperEeg-M467-project/registered_outputs")
+ecogs = get_just_ecog_data(registered_dir,data_root)
+xyz = get_electrode_normalized_loc(registered_dir)
+xyz_clean, mapping_clean, kept_global_indices, cleaned = full_preprocessing(ecogs,xyz)
+patient_corr_mat = make_patient_correlation_matrix(xyz_clean,cleaned,mapping_clean)
+
+from noad_production_funcs import create_u
+U_det, loss = create_u(k=10,r=100,lamb=1,patient_corr_mat=patient_corr_mat,xyz_clean=xyz_clean,object_func=object_func)
+
+"""
+# above would be good example piece of code of how to load in all the needed data and prepare for using create_u function
+# remember that the paths will be different for you
+# and also remember that to get the full U you would need to do (U_det@U_det.T)
+
+
+
+# This is the objective function defined by Javier, so if you have any questions go to him first
+def object_func(C,U,L,lamb,patient_node_num):
+    sum = torch.zeros(1,requires_grad=True) 
+    iter = 0
+    for i in range(14):
+        c = C[i] #each patient correlation matrix
+        num_nodes = patient_node_num[i]
+        u = U[iter:iter+num_nodes,:] #all columns of rows iter+num of nodes + 1 
+        sum = sum + (torch.linalg.norm((u@u.T - c),ord='fro'))**2 #+lamb*torch.trace(U.T@L@U)
+        iter = iter + num_nodes
+    sum = sum + lamb*torch.trace(U.T@L@U)
+    return sum
+
+############## reate_u ################ creates the U matrix
+# r: the 'complexity' of our approximation (the number of columns of our U matrix we will make)
+# k: the number of nearest neighbors a electrode is 'connected to'
+# lamb: the parameter on trace aspect of the loss function
+# xyz_clean: normalized electrode locations on the brain
+# patient_corr_mat: the list of indivdual patient correlation matrices (ONLY containing the nodes they obsevered on them)
+# object_func: the objective function we want to minimize
+# training_steps: number of steps to train the function (usually 500 should be enough, defaults to 1000)
+# lr: learning rate of the optimizer
+######### Returns #########
+# U: this is the big U matrix, to get our correlation matrix do U@U.T 
+# Loss: this is the list of loss at each step of training to ensure that the function is converging
+######### Notes: #########
+# This current version constrains both the rows and columns of U to be on the unit sphere 
+# I may also somehow be constraining the entire matrix but im not sure,
+# regardless this produces somewhat the results we want, a new version that removes the extra constraints is on the way
+##############################
+def create_u(k,r,lamb,patient_corr_mat,xyz_clean,object_func=object_func,training_steps=1000,lr=0.01):
+    ############## Make Graph ##############
+    num_nodes = xyz_clean.shape[0] #649
+    neigh = NearestNeighbors(n_neighbors=k).fit(xyz_clean)
+    indicesofneigh = neigh.kneighbors()[1] #gets the indices of the 10 (or k) neighbors of each node
+    # turn indices lists into pairwiase combos
+    all_edges = []
+    iter = 0
+    for indexs in indicesofneigh:
+        for num in indexs:
+            all_edges.append((iter,num))
+        iter += 1
+    G = nx.Graph()
+    nodes = np.arange(num_nodes)
+    G.add_nodes_from(nodes)
+    G.add_edges_from(all_edges)
+    ############## Preparing function inputs ##############
+    Glaplacian = nx.linalg.laplacian_matrix(G).toarray()
+    L = torch.tensor(Glaplacian,dtype=torch.float32,requires_grad=False)
+    patient_node_num = [] #number of electrodes each patient has
+    C = []
+    for corr in patient_corr_mat:
+        C.append(torch.tensor(np.array(corr),requires_grad=True))
+        patient_node_num.append(corr.shape[0])
+    ############## Preparing U and its manifold ##############
+    rng = np.random.default_rng()
+    U_intial = rng.uniform(1,2,(num_nodes,r)) #random values to start with
+    U_intial = U_intial/np.linalg.norm(U_intial,axis=1,keepdims=True) #ensuring intial U is normalized
+    U_tensor = torch.tensor(U_intial,dtype=torch.float32) 
+    sphere = geoopt.manifolds.Sphere()
+    #https://geoopt.readthedocs.io/en/latest/manifolds.html?highlight=sphere#geoopt.manifolds.Sphere
+    # ^ see the above site for more on the manifolds^
+    U = geoopt.ManifoldParameter(U_tensor,manifold=sphere) # makes it so the U is contrained to the sphere
+    ############## Training U ##############
+    optimizer = geoopt.optim.RiemannianAdam([U], lr=0.01) # adam optmizer that is aware we are stuck on the sphere
+    loss_list = []
+    grads = []
+    print("Optimizing U")
+    for step in tqdm(range(training_steps)):
+        optimizer.zero_grad()
+        z = object_func(C,U,L,lamb,patient_node_num) #this is our loss function
+        loss_list.append(z.detach())
+        z.backward()
+        optimizer.step()
+    return U.detach(),loss_list
+
+"""
+from tara_preprocessing import full_preprocessing,make_rbf_correlation_matrix,get_just_ecog_data,get_electrode_normalized_loc
+correlation_matrix = np.load("/Users/noahwanless/Desktop/Spring2026/M467/gitproject/SuperEeg-M467-project/correlation_matrix.npy")
+#^ above is the BIG correlation matrix of all the patients based on some code Tara made
+data_root = Path("/Users/noahwanless/Desktop/Spring2026/M467/faces_basic/data")
+registered_dir = Path("../SuperEeg-M467-project/registered_outputs")
+ecogs = get_just_ecog_data(registered_dir,data_root)
+xyz = get_electrode_normalized_loc(registered_dir)
+xyz_clean, mapping_clean, kept_global_indices, cleaned = full_preprocessing(ecogs,xyz) #this fully preprocesses the data
+
+from noad_production_funcs import single_patient_prediction
+
+pred,y_real = single_patient_prediction(0,5,15,ecogs,correlation_matrix)
+"""
+#above is a good example of how to run the single_patient_prediction function
+
+
+
+
+##########################
+# patient: What patient this is 0-13 (we have 14 total)
+# electrodestart: The first electrode we want to deal with for this patient (!!! INCLUSIVE !!!)
+# electrodeend: The last electrode we want to deal with for this patient (!!! EXCLUSIVE !!!)
+# ecogs: the ecog data
+# correlation_matrix: the correlation matrix of electrodes across all patients
+##########################
+# Calculates a predication for all the other electrodes across all timesteps for all electrodes we did not observe in the
+# given patient
+#! NOTE: it predicts the Z score of the voltage data and the Z scored values is whats returned for comparision
+# Additionally we went over in class this function, and we think its correct, it may not be but for now
+# unless you see a glaring error, you can assume it works correctly
+def single_patient_prediction(patient,electrodestart,electrodeend,ecogs,correlation_matrix):
+    #this gets everything for this patient, the correlation of the observed and unobserved datapoints
+    Y = ecogs[patient] #gets this paitents data
+    row_means = np.mean(Y, axis=0, keepdims=True)
+    row_stds = np.std(Y, axis=0, keepdims=True)
+    Y_z_score = (Y - row_means) / row_stds #turns them into there z_score for each value in the data
+    ########### Building our K's ###########
+    K_patient = correlation_matrix[:,electrodestart:electrodeend] #this gets all the electrodes that the patient has with their own correlation and that of others
+    Kalpha_alpha = K_patient[electrodestart:electrodeend,:] #gets all the rows that the patient has observed data for
+    if electrodestart == 0: #if the patient is the first (and thus all the nonobserved nodes are 'below' the observed ones)
+        Kbeta_alpha = K_patient[electrodeend:,:] # get all rows the patient doesnt have observed 
+        Y_true = Y_z_score[:,electrodeend:]
+    else:# else the patient is not the first (and thus all the nonobserved nodes are both 'below' and 'above' the observed ones in the correlation matrix)
+        Kbeta_alpha_1 = K_patient[0:electrodestart,:]
+        Kbeta_alpha_2 = K_patient[electrodeend:,:]
+        Kbeta_alpha = np.vstack((Kbeta_alpha_1,Kbeta_alpha_2))
+        # Also gets the true Z score values for comparision purposes
+        Y_true_1 = Y_z_score[0:electrodestart,:]
+        Y_true_2 = Y_z_score[electrodeend:,:]
+        Y_true = np.vstack((Y_true_1,Y_true_2))
+    ########### Using the forumla ###########
+    Y_patient = Y_z_score[:,electrodestart:electrodeend] #gets all the z_score values from electrodes the patient we did observed    
+    Yt = Y_patient.T #take the transpose of it
+    Kalpha_alpha_inv = np.linalg.inv(Kalpha_alpha) 
+    pred = ((Kbeta_alpha@Kalpha_alpha_inv)@Yt).T #using formula from paper
+
+    return pred,Y_z_score
