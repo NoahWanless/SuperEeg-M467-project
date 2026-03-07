@@ -58,9 +58,15 @@ def object_func(C,U,L,lamb,patient_node_num):
 # U: this is the big U matrix, to get our correlation matrix do U@U.T 
 # Loss: this is the list of loss at each step of training to ensure that the function is converging
 ######### Notes: #########
-# This current version constrains both the rows and columns of U to be on the unit sphere 
-# I may also somehow be constraining the entire matrix but im not sure,
-# regardless this produces somewhat the results we want, a new version that removes the extra constraints is on the way
+# It must be noted that yes, to our knowlegde the constrained of the manifold is applied to the rows of the 
+# matrix U. as is desired by the formula
+# This is checked by both a test of the output of the model (which gives a matrix were only the rows are norm 1)
+# and by examining the source code of the geoopt.optim.RiemannianAdam().step() function, which shows it iterates through the 
+# entires U (the only param 'group' we gave) which means iterating through the rows, and those are what is constrained to the 
+# manifold
+# For more consult the following sites:
+# https://geoopt.readthedocs.io/en/latest/_modules/geoopt/optim/radam.html#RiemannianAdam
+# https://github.com/pytorch/pytorch/blob/v2.10.0/torch/optim/optimizer.py#L342
 ##############################
 def create_u(k,r,lamb,patient_corr_mat,xyz_clean,object_func=object_func,training_steps=1000,lr=0.01):
     ############## Make Graph ##############
