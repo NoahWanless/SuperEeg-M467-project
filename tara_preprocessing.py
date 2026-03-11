@@ -8,6 +8,14 @@ import scipy
 import pandas as pd
 from scipy.io import loadmat
 
+def car(data):
+    """
+    Common Average Reference
+    data: (time, channels)
+    returns: (time, channels)
+    """
+    return data - data.mean(axis=0, keepdims=True) 
+
 
 ########### get_single_registered_out: ###########
 # takes in the directory path (if given) to the regester outputs and grabs all the 
@@ -49,14 +57,16 @@ def get_just_ecog_data(registered_dir = Path("../SuperEeg-M467-project/registere
 ########### full_preprocessing: ###########
 # xyz: the output of get_electrode_normalized_loc(), or the list of normalized electrode locations
 # ecogs: the voltage data for all patients, for all electrodes and time
+# notch_size: the size of the notch we remove around desired frequencies
+# minus_mean: subtracts the mean from the voltage (True or False)
 # RETURNS:
 # xyz_clean: the normalized electrode locations cleaned out
 # mapping_clean #? I DONT KNOW WHAT THIS IS TARA IF YOU WANT TO ANSWER THAT THAT WOULD BE GREAT
 # kept_global_indices: the indexs of what electrodes were kept 
 # cleaned: the actual voltage data with certain electrodes removed (we use this var under the name dropped later)
-def full_preprocessing(ecogs,xyz):
+def full_preprocessing(ecogs,xyz,notch_size,minus_mean=False):
     #Step one: apply the butternotch filter!
-    sos = signal.butter(4, [59.5, 60.5], btype='bandstop', analog=False, 
+    sos = signal.butter(4, [59-notch_size, 60+notch_size], btype='bandstop', analog=False, 
                             output='sos', fs=1000)
     filtered = []
     for file in ecogs:
@@ -73,7 +83,10 @@ def full_preprocessing(ecogs,xyz):
         good_idx = np.where(k <= 10)[0]
         
         cleaned_file = file[:, good_idx]
-        cleaned.append(cleaned_file)
+        if minus_mean:
+            cleaned.append(car(cleaned_file)) #subtracts the mean
+        else:
+            cleaned.append(cleaned_file)
         
         global_good_idx = good_idx + electrode_offset
         kept_global_indices.extend(global_good_idx)
