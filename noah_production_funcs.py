@@ -131,6 +131,92 @@ pred,y_real = single_patient_prediction(0,5,15,ecogs,correlation_matrix)
 #above is a good example of how to run the single_patient_prediction function
 
 
+##########################
+# patient: What patient this is 0-13 or higher if its the special hold one out situation
+# ecogs: the ecog data
+# correlation_matrix: the correlation matrix of electrodes across all patients
+##########################
+# Calculates a predication for all the other electrodes across all timesteps for all electrodes we did not observe in the
+# given patient
+#! NOTE: it predicts the Z score of the voltage data and the Z scored values is whats returned for comparision
+# Additionally we went over in class this function, and we think its correct, it may not be but for now
+# unless you see a glaring error, you can assume it works correctly
+# note this is the version that does NOT hold anything out of the function and calcuations
+########### Returns: ###########
+# indices_we_pred: the global indices of what electrodes we are predicting
+# 
+def single_patient_prediction_pure(patient,ecogs,correlation_matrix):
+    #########he correlation of the observed and unobserved datapoints #########
+    Y = ecogs[patient] #gets this paitents data
+    row_means = np.mean(Y, axis=0, keepdims=True)
+    row_stds = np.std(Y, axis=0, keepdims=True)
+    Y_z_score = (Y - row_means) / row_stds #turns them into there z_score for each value in the data
+    ######################## this gets everything for this patient ########################
+    if torch.is_tensor(correlation_matrix):
+        correlation_matrix = correlation_matrix.numpy()
+    patient_node_start = 0  #these are where this patients electrodes would start and end in the correlation matrix
+    patient_node_end = -1 #!THESE ARE INCLUSIVE VALUES, BOTH OF THEM
+    indices_we_pred = []
+    for i,pat in enumerate(ecogs):
+        if i < patient:
+            patient_node_start += pat.shape[1]
+        if i <=patient:
+            patient_node_end += pat.shape[1]
+    for i in range(correlation_matrix.shape[0]): #for each electrode
+        if i < patient_node_start or i > patient_node_end:
+            indices_we_pred.append(i) #these are the ones we are prediciting
+    ################ Building the resources to actually use the forumla ################
+    K_patient = correlation_matrix[:,patient_node_start:patient_node_end+1] #this gets all the electrodes that the patient has with their own correlation and that of others
+    Kalpha_alpha = K_patient[patient_node_start:patient_node_end+1,:]
+    Kalpha_alpha_inv = np.linalg.inv(Kalpha_alpha) 
+    if patient_node_start == 0: #if the patient is the first (and thus all the nonobserved nodes are 'below' the observed ones)
+        Kbeta_alpha = K_patient[patient_node_end+1:,:] # get all rows the patient doesnt have observed 
+    else:# else the patient is not the first (and thus all the nonobserved nodes are both 'below' and 'above' the observed ones in the correlation matrix)
+        Kbeta_alpha_1 = K_patient[0:patient_node_start,:]
+        Kbeta_alpha_2 = K_patient[patient_node_end+1:,:]
+        Kbeta_alpha = (np.vstack((Kbeta_alpha_1,Kbeta_alpha_2)))
+    Y_patient = Y_z_score[:,0:patient_node_end+1]
+    Yt = Y_patient.T
+    ############# The formula #############
+    pred = ((Kbeta_alpha@Kalpha_alpha_inv)@Yt).T
+    return pred,indices_we_pred
+
+
+# Takes in the ecogs and then converts all of it to z-score
+def convert_to_z_score(ecogs):
+    new_ecogs = []
+    for pat in ecogs:
+        row_means = np.mean(pat, axis=0, keepdims=True)
+        row_stds = np.std(pat, axis=0, keepdims=True)
+        z_pat = (pat - row_means) / row_stds
+        new_ecogs.append(z_pat)
+    return new_ecogs
+
+#iterates though the ecog data for electrodes via a global electrode index
+# returns that electrodes information from the list
+def index_ecog_globally(ecog,index):
+    index_sum = 0
+    for pat in ecog:
+    
+        if pat.ndim == 1: #if we axre dealing with the special fake patient, add a dim for iteartion reasons
+            pat_t = np.array([pat])
+        else: #else take the transpose so we can iterate over electrodes 
+            pat_t = (pat.T) 
+
+        for elec in pat_t: #iterate through the electrode dimension
+            if index_sum == index: #if the sum of the indices we have dealt with is what we want
+                if pat_t.shape[0] == 1: #check if the patietn we are iterating over is the fake one, and just return the whole thing
+                    return pat 
+                else: #else return just the electrode we want
+                    return elec
+            else: #increase the num of electrodes we have gone through
+                index_sum = index_sum + 1
+            
+
+
+
+
+
 
 
 ##########################
@@ -146,11 +232,35 @@ pred,y_real = single_patient_prediction(0,5,15,ecogs,correlation_matrix)
 # Additionally we went over in class this function, and we think its correct, it may not be but for now
 # unless you see a glaring error, you can assume it works correctly
 def single_patient_prediction(patient,electrodestart,electrodeend,ecogs,correlation_matrix):
-    #this gets everything for this patient, the correlation of the observed and unobserved datapoints
+    #, the correlation of the observed and unobserved datapoints
+    ######################## this gets everything for this patient ########################
+    patient_elec_count = [] #gets the number of electrodes per patients 
+    total_nodes = 0
+    patient_node_start = 0 
+    patient_node_end = 0
+    for i,pat in enumerate(ecogs):
+        patient_elec_count.append(pat.shape[1])
+        total_nodes +=pat.shape[1]
+        if i < patient:
+            patient_node_start += pat.shape[1]
+        if i <=patient:
+            patient_node_end += pat.shape[1]
+    print("patient_node_start")        
+    print(patient_node_start)        
+    print("patient_node_end")
+    print(patient_node_end)
+
+
+    particular_patient_count = ecogs[patient].shape[0] #gets num electrodes for this one patient
+    
     Y = ecogs[patient] #gets this paitents data
     row_means = np.mean(Y, axis=0, keepdims=True)
     row_stds = np.std(Y, axis=0, keepdims=True)
     Y_z_score = (Y - row_means) / row_stds #turns them into there z_score for each value in the data
+
+
+
+
     ########### Building our K's ###########
     K_patient = correlation_matrix[:,electrodestart:electrodeend] #this gets all the electrodes that the patient has with their own correlation and that of others
     Kalpha_alpha = K_patient[electrodestart:electrodeend,:] #gets all the rows that the patient has observed data for
@@ -172,3 +282,5 @@ def single_patient_prediction(patient,electrodestart,electrodeend,ecogs,correlat
     pred = ((Kbeta_alpha@Kalpha_alpha_inv)@Yt).T #using formula from paper
 
     return pred,Y_z_score
+
+

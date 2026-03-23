@@ -64,7 +64,9 @@ def get_just_ecog_data(registered_dir = Path("../SuperEeg-M467-project/registere
 # mapping_clean #? I DONT KNOW WHAT THIS IS TARA IF YOU WANT TO ANSWER THAT THAT WOULD BE GREAT
 # kept_global_indices: the indexs of what electrodes were kept 
 # cleaned: the actual voltage data with certain electrodes removed (we use this var under the name dropped later)
+# patient_electrode_info: how many electordes each patient has recorded for use (#!CURRENTLY NOT BEING RETURNED)
 def full_preprocessing(ecogs,xyz,notch_size,minus_mean=False):
+
     #Step one: apply the butternotch filter!
     sos = signal.butter(4, [59-notch_size, 60+notch_size], btype='bandstop', analog=False, 
                             output='sos', fs=1000)
@@ -76,7 +78,7 @@ def full_preprocessing(ecogs,xyz,notch_size,minus_mean=False):
     kept_global_indices = []
     mapping_clean = []
     electrode_offset = 0
-
+    patient_electrode_info = []
     for i, file in enumerate(filtered): #for each electrode we run through, get the filtered voltage and the index
         n_electrodes = file.shape[1]
         k = kurtosis(file, axis=0)
@@ -91,7 +93,7 @@ def full_preprocessing(ecogs,xyz,notch_size,minus_mean=False):
         global_good_idx = good_idx + electrode_offset
         kept_global_indices.extend(global_good_idx)
         electrode_offset += n_electrodes
-        
+        patient_electrode_info.append(len(good_idx)) #records the number of kept electrodes
         for j in range(len(good_idx)):  # number of KEPT electrodes
             mapping_clean.append([len(mapping_clean), i])  # i = subject index
 
@@ -141,9 +143,108 @@ def make_rbf_correlation_matrix(xyz_clean,dropped,mapping_clean):
         correlation_matrices.append(C_hat)
     return correlation_matrices
 
+
+
+#TODO: MAKE A VERSION THAT ADDS A NEW 'PATIENT, AND THIS ONE WILL BE FAKE'
+#TODO: MAKE A VERSION THAT ADDS A NEW 'PATIENT, AND THIS ONE WILL BE FAKE'
+
+########### full_preprocessing: ###########
+# xyz: the output of get_electrode_normalized_loc(), or the list of normalized electrode locations
+# ecogs: the voltage data for all patients, for all electrodes and time
+# notch_size: the size of the notch we remove around desired frequencies
+# minus_mean: subtracts the mean from the voltage (True or False)
+# pat_to_hold: the patient 0-13, to hold out the final electrode from to use for validation
+# RETURNS:
+# xyz_clean: the normalized electrode locations cleaned out
+# mapping_clean: ??? 
+# kept_global_indices: the indexs of what electrodes were kept 
+# cleaned: the actual voltage data with certain electrodes removed (we use this var under the name dropped later)
+# patient_electrode_info: how many electordes each patient has recorded for use (#!CURRENTLY NOT BEING RETURNED)
+# hold_out_file: this is the electrode info of the held out electrode, taken directly
+#! NOTE THIS IS FROM THE UNFILTED DATA, NOT THE FILTERED ONES I THINK?
+def full_preprocessing_hold(ecogs,xyz,notch_size,minus_mean=False,pat_to_hold=-1):
+    ######## Step one: apply the butternotch filter! ########
+    sos = signal.butter(4, [59-notch_size, 60+notch_size], btype='bandstop', analog=False, 
+                            output='sos', fs=1000)
+    filtered = []
+    num_elec_pat = []
+    for file in ecogs:
+        num_elec_pat.append(len(file))
+        filtered.append(signal.sosfiltfilt(sos, file))
+    print("Filter applied")
+    ######## Step two: kurtosis, and holding out ########
+    cleaned = [] #the cleaned data itself
+    kept_global_indices = [] #global indices of electrodes kept
+    mapping_clean = []
+    electrode_offset = 0
+    patient_electrode_info = []
+    for i, file in enumerate(filtered): #for each electrode we run through, get the filtered voltage and the index, and update things 
+        print(f"Looking at patient: {i}")
+        n_electrodes = file.shape[1]
+        k = kurtosis(file, axis=0)
+        good_idx = np.where(k <= 10)[0] #these are local indices
+        ###### if we are holding out, record the electrode index, and the file
+        ###### for that one, along with removing the index from the big list
+        if pat_to_hold == i: 
+            elec_to_hold = good_idx[(len(good_idx) - 1)] #gets the last of the remaining element to remove (the index of it locally to this patient)
+            #kurtosis_diff = n_electrodes - len(good_idx) #this is something that was here and i dont know what it was for
+            hold_out_file = file[:, elec_to_hold]
+            good_idx = np.delete(good_idx, (len(good_idx) - 1))
+            
+        ####### updating the indexs kept globally #######
+        global_good_idx = good_idx + electrode_offset #now these guys are global indices
+        kept_global_indices.extend(global_good_idx)
+
+        ######## Appendimg to the list of global indices ########
+        if pat_to_hold == i: 
+            kept_global_indices.append(elec_to_hold + electrode_offset)  #this addes the global index of the held out one onre
+            global_held = (elec_to_hold + electrode_offset) #the global index of the held out thing but of the orginal dataset, not the one with all these things removed(via kurtosis)
+
+        ##### updating patient electrode info #####
+        electrode_offset += n_electrodes
+        patient_electrode_info.append(len(good_idx)) #records the number of kept electrodes
+        for j in range(len(good_idx)):  # number of KEPT electrodes, add what ones were kept
+            if i < pat_to_hold:
+                mapping_clean.append([len(mapping_clean), i])  # i = subject index    
+            elif i == pat_to_hold:
+                mapping_clean.append([len(mapping_clean), i])  # i = subject index    
+            else:
+                mapping_clean.append([len(mapping_clean), i+1])        
+
+        cleaned_file = file[:, good_idx] #creates the cleaned file 
+
+        if minus_mean:
+            cleaned.append(car(cleaned_file)) #subtracts the mean if desired
+        else:
+            cleaned.append(cleaned_file)
+        
+        ##### This does the final addition of the hold out file to the list of cleaned files
+        if pat_to_hold == i:
+            patient_electrode_info.append(1) #also adds the fakes patients info to the thing
+            mapping_clean.append([len(mapping_clean), i+1]) #this appends the fake patient info to the mapping clean data
+            if minus_mean:
+                cleaned.append(car(hold_out_file)) #subtracts the mean
+            else: #these two require a extra dimension for consistancy with everything
+                #TODO: how many elements are in cleaned, and that would give the local index
+                local_index_held = len(cleaned)
+                cleaned.append(hold_out_file)
+                
+        
+            
+    ##### updating all the final elements to return #####
+    mapping_clean = np.array(mapping_clean)
+    kept_global_indices = np.array(kept_global_indices) 
+    xyz_clean = xyz[kept_global_indices]
+    
+    return xyz_clean, mapping_clean, kept_global_indices, cleaned, hold_out_file
+
+
+#TODO: MAKE A VERSION THAT ADDS A NEW 'PATIENT, AND THIS ONE WILL BE FAKE'
+#TODO: MAKE A VERSION THAT ADDS A NEW 'PATIENT, AND THIS ONE WILL BE FAKE'
+
 # All three inputs are part of the outputs of the full_preprocessing() function
 # xyz_clean: the normalized electrode locations cleaned out
-# dropped: the actual voltage data with certain electrodes removed
+# dropped: all electrodes and there timeserises (this is the cleaned dropped)
 # mapping_clean: this one i dont know
 # this returns the list of the patient correlation matrices but only of the size for the 
 # number of electrodes for that patients
@@ -158,7 +259,7 @@ def make_patient_correlation_matrix(xyz_clean,dropped,mapping_clean):
     correlation_matrices = []
     for i, matrix in enumerate(dropped): 
         # Get electrode indices for this patient
-        patient_electrode_indices = mapping_clean[mapping_clean[:, 1] == i, 0].astype(int)   
+        #patient_electrode_indices = mapping_clean[mapping_clean[:, 1] == i, 0].astype(int)   
         # Compute pairwise correlation between this patient's electrodes
         corr = pd.DataFrame(matrix).corr() #^ COLLECT THESE FOR JUST THE PATIENT CORRELTAION MATRIX
 
