@@ -222,25 +222,27 @@ def full_preprocessing_hold(ecogs,xyz,notch_size,minus_mean=False,pat_to_hold=-1
         if pat_to_hold == i:
             patient_electrode_info.append(1) #also adds the fakes patients info to the thing
             mapping_clean.append([len(mapping_clean), i+1]) #this appends the fake patient info to the mapping clean data
+            global_held_index = 0
+            for pat in cleaned: #gets the total num of electrodes so far, this will be our index for the held out file we will add
+                global_held_index += pat.shape[1]
             if minus_mean:
                 cleaned.append(car(hold_out_file)) #subtracts the mean
+                hold_out_file = car(hold_out_file)
+                #print(car(hold_out_file))
             else: #these two require a extra dimension for consistancy with everything
-                #TODO: how many elements are in cleaned, and that would give the local index
-                local_index_held = len(cleaned)
                 cleaned.append(hold_out_file)
                 
         
-            
+
     ##### updating all the final elements to return #####
     mapping_clean = np.array(mapping_clean)
     kept_global_indices = np.array(kept_global_indices) 
     xyz_clean = xyz[kept_global_indices]
-    
-    return xyz_clean, mapping_clean, kept_global_indices, cleaned, hold_out_file
+    #! global_held_index, switch to returning this if you want to get the global index of the held out file
+    return xyz_clean, mapping_clean, kept_global_indices, cleaned, hold_out_file, global_held_index
 
 
-#TODO: MAKE A VERSION THAT ADDS A NEW 'PATIENT, AND THIS ONE WILL BE FAKE'
-#TODO: MAKE A VERSION THAT ADDS A NEW 'PATIENT, AND THIS ONE WILL BE FAKE'
+
 
 # All three inputs are part of the outputs of the full_preprocessing() function
 # xyz_clean: the normalized electrode locations cleaned out

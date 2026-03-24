@@ -32,43 +32,12 @@ U_det, loss = create_u(k=10,r=100,lamb=1,patient_corr_mat=patient_corr_mat,xyz_c
 
 
 
-# This is the objective function defined by Javier, so if you have any questions go to him first
-def object_func(C,U,L,lamb,patient_node_num):
-    sum = torch.zeros(1,requires_grad=True) 
-    iter = 0
-    for i in range(14):
-        c = C[i] #each patient correlation matrix
-        num_nodes = patient_node_num[i]
-        u = U[iter:iter+num_nodes,:] #all columns of rows iter+num of nodes + 1 
-        sum = sum + (torch.linalg.norm((u@u.T - c),ord='fro'))**2 #+lamb*torch.trace(U.T@L@U)
-        iter = iter + num_nodes
-    sum = sum + lamb*torch.trace(U.T@L@U)
-    return sum
-
-############## reate_u ################ creates the U matrix
-# r: the 'complexity' of our approximation (the number of columns of our U matrix we will make)
-# k: the number of nearest neighbors a electrode is 'connected to'
-# lamb: the parameter on trace aspect of the loss function
-# xyz_clean: normalized electrode locations on the brain
-# patient_corr_mat: the list of indivdual patient correlation matrices (ONLY containing the nodes they obsevered on them)
-# object_func: the objective function we want to minimize
-# training_steps: number of steps to train the function (usually 500 should be enough, defaults to 1000)
-# lr: learning rate of the optimizer
-######### Returns #########
-# U: this is the big U matrix, to get our correlation matrix do U@U.T 
-# Loss: this is the list of loss at each step of training to ensure that the function is converging
-######### Notes: #########
-# It must be noted that yes, to our knowlegde the constrained of the manifold is applied to the rows of the 
-# matrix U. as is desired by the formula
-# This is checked by both a test of the output of the model (which gives a matrix were only the rows are norm 1)
-# and by examining the source code of the geoopt.optim.RiemannianAdam().step() function, which shows it iterates through the 
-# entires U (the only param 'group' we gave) which means iterating through the rows, and those are what is constrained to the 
-# manifold
-# For more consult the following sites:
-# https://geoopt.readthedocs.io/en/latest/_modules/geoopt/optim/radam.html#RiemannianAdam
-# https://github.com/pytorch/pytorch/blob/v2.10.0/torch/optim/optimizer.py#L342
-##############################
-def create_u(k,r,lamb,patient_corr_mat,xyz_clean,object_func=object_func,training_steps=1000,lr=0.01):
+####### create_lapaican_knn #######
+# xyz_clean: the points to use to make the graph
+# k: how many nearest neighbors to connect points to
+####### Returns: #######
+# Glaplacian, the laplacian of the matrix in array form
+def create_lapaican_knn(xyz_clean,k):
     ############## Make Graph ##############
     num_nodes = xyz_clean.shape[0] #649
     neigh = NearestNeighbors(n_neighbors=k).fit(xyz_clean)
@@ -86,6 +55,85 @@ def create_u(k,r,lamb,patient_corr_mat,xyz_clean,object_func=object_func,trainin
     G.add_edges_from(all_edges)
     ############## Preparing function inputs ##############
     Glaplacian = nx.linalg.laplacian_matrix(G).toarray()
+    return Glaplacian
+
+#this is the rbf distance function from the paper
+def rbf_dist(x,nu,lamb):
+    return  np.exp(-1*(np.linalg.norm(x-nu)**2)/lamb)
+    
+####### create_lapaican_rbf #######
+# xyz_clean: the points to use to make the graph
+# lamb: scalling factor for the rbf function, see its definition
+####### Returns: #######
+# Glaplacian, the laplacian of the matrix in array form
+def create_lapaican_rbf(xyz_clean,lamb):
+    num_nodes = xyz_clean.shape[0]
+    nodes = np.arange(num_nodes)
+    G = nx.Graph()
+    G.add_nodes_from(nodes) #adds all the nodes
+    ######### Now connecting the nodes #########
+    all_edges = []
+    iter = 0
+    for x,p1 in zip(nodes,xyz_clean):
+        for y,p2 in zip(nodes,xyz_clean):
+            if x!=y: #this way nodes are not connected to itself
+                G.add_edge(x,y,weight=rbf_dist(p1,p2,lamb)) 
+    
+    Glaplacian = nx.linalg.laplacian_matrix(G,weight='weight').toarray()
+    return Glaplacian
+
+
+
+
+
+
+# This is the objective function defined by Javier, so if you have any questions go to him first
+def object_func(C,U,L,lamb,patient_node_num):
+    sum = torch.zeros(1,requires_grad=True) 
+    iter = 0
+    for i in range(14):
+        c = C[i] #each patient correlation matrix
+        num_nodes = patient_node_num[i]
+        u = U[iter:iter+num_nodes,:] #all columns of rows iter+num of nodes + 1 
+        sum = sum + (torch.linalg.norm((u@u.T - c),ord='fro'))**2 #+lamb*torch.trace(U.T@L@U)
+        iter = iter + num_nodes
+    sum = sum + lamb*torch.trace(U.T@L@U)
+    return sum
+
+############## reate_u ################ creates the U matrix
+# r: the 'complexity' of our approximation (the number of columns of our U matrix we will make)
+# k: 
+#       the number of nearest neighbors a electrode is 'connected to' if graph='knn'
+#       the scaler for the rbf function if graph='rbf'
+# lamb: the parameter on trace aspect of the loss function
+# xyz_clean: normalized electrode locations on the brain
+# patient_corr_mat: the list of indivdual patient correlation matrices (ONLY containing the nodes they obsevered on them)
+# object_func: the objective function we want to minimize
+# training_steps: number of steps to train the function (usually 500 should be enough, defaults to 1000)
+# lr: learning rate of the optimizer
+# graph: 'knn' or 'rbf' defines what graph set up to use for making the laplacian
+######### Returns #########
+# U: this is the big U matrix, to get our correlation matrix do U@U.T 
+# Loss: this is the list of loss at each step of training to ensure that the function is converging
+######### Notes: #########
+# It must be noted that yes, to our knowlegde the constrained of the manifold is applied to the rows of the 
+# matrix U. as is desired by the formula
+# This is checked by both a test of the output of the model (which gives a matrix were only the rows are norm 1)
+# and by examining the source code of the geoopt.optim.RiemannianAdam().step() function, which shows it iterates through the 
+# entires U (the only param 'group' we gave) which means iterating through the rows, and those are what is constrained to the 
+# manifold
+# For more consult the following sites:
+# https://geoopt.readthedocs.io/en/latest/_modules/geoopt/optim/radam.html#RiemannianAdam
+# https://github.com/pytorch/pytorch/blob/v2.10.0/torch/optim/optimizer.py#L342
+##############################
+def create_u(k,r,lamb,patient_corr_mat,xyz_clean,object_func=object_func,training_steps=1000,lr=0.01,graph='knn'):
+    ############## Make Graph ##############
+    num_nodes = xyz_clean.shape[0]
+    if graph == 'knn':
+        Glaplacian = create_lapaican_knn(xyz_clean,k)
+    elif graph == 'rbf':
+        Glaplacian = create_lapaican_rbf(xyz_clean,k)
+    ############## Preparing function inputs ##############
     L = torch.tensor(Glaplacian,dtype=torch.float32,requires_grad=False)
     patient_node_num = [] #number of electrodes each patient has
     C = []
@@ -113,6 +161,8 @@ def create_u(k,r,lamb,patient_corr_mat,xyz_clean,object_func=object_func,trainin
         z.backward()
         optimizer.step()
     return U.detach(),loss_list
+
+
 
 """
 from tara_preprocessing import full_preprocessing,make_rbf_correlation_matrix,get_just_ecog_data,get_electrode_normalized_loc
@@ -194,6 +244,7 @@ def convert_to_z_score(ecogs):
 
 #iterates though the ecog data for electrodes via a global electrode index
 # returns that electrodes information from the list
+#! NOTE: if you are using this remember that the car function that is applied potientally in preprocessing isnt automatically applied here
 def index_ecog_globally(ecog,index):
     index_sum = 0
     for pat in ecog:
@@ -213,74 +264,49 @@ def index_ecog_globally(ecog,index):
                 index_sum = index_sum + 1
             
 
-
-
-
-
-
-
-##########################
-# patient: What patient this is 0-13 (we have 14 total)
-# electrodestart: The first electrode we want to deal with for this patient (!!! INCLUSIVE !!!)
-# electrodeend: The last electrode we want to deal with for this patient (!!! EXCLUSIVE !!!)
-# ecogs: the ecog data
-# correlation_matrix: the correlation matrix of electrodes across all patients
-##########################
-# Calculates a predication for all the other electrodes across all timesteps for all electrodes we did not observe in the
-# given patient
-#! NOTE: it predicts the Z score of the voltage data and the Z scored values is whats returned for comparision
-# Additionally we went over in class this function, and we think its correct, it may not be but for now
-# unless you see a glaring error, you can assume it works correctly
-def single_patient_prediction(patient,electrodestart,electrodeend,ecogs,correlation_matrix):
-    #, the correlation of the observed and unobserved datapoints
-    ######################## this gets everything for this patient ########################
-    patient_elec_count = [] #gets the number of electrodes per patients 
-    total_nodes = 0
-    patient_node_start = 0 
-    patient_node_end = 0
-    for i,pat in enumerate(ecogs):
-        patient_elec_count.append(pat.shape[1])
-        total_nodes +=pat.shape[1]
-        if i < patient:
-            patient_node_start += pat.shape[1]
-        if i <=patient:
-            patient_node_end += pat.shape[1]
-    print("patient_node_start")        
-    print(patient_node_start)        
-    print("patient_node_end")
-    print(patient_node_end)
-
-
-    particular_patient_count = ecogs[patient].shape[0] #gets num electrodes for this one patient
+def u_metric_display(U_det,cleaned,file_held,loss):
+    pred,indices = single_patient_prediction_pure(0,cleaned,(U_det@U_det.T))
+    row_means = np.mean(file_held, axis=0, keepdims=True)
+    row_stds = np.std(file_held, axis=0, keepdims=True)
+    z_held = (file_held - row_means) / row_stds
+    fig, ax = plt.subplots(1, 2, figsize=(16, 6))
+    sns.heatmap(U_det@U_det.T,ax=ax[0], cmap='coolwarm')  #[44:84,44:84]-patient_corr_mat[1].to_numpy()
+    ax[0].set_title('Final U correlation matrix')
+    ax[1].plot(loss)
+    ax[1].set_title('Loss')
+    plt.show()
     
-    Y = ecogs[patient] #gets this paitents data
-    row_means = np.mean(Y, axis=0, keepdims=True)
-    row_stds = np.std(Y, axis=0, keepdims=True)
-    Y_z_score = (Y - row_means) / row_stds #turns them into there z_score for each value in the data
+    plt.figure(figsize=(16, 7))
+    plt.title('Prediction vs True Values')
+    plt.plot(pred[9000:9700,0],label='pred')
+    plt.plot(z_held[9000:9700],label='true')
+    plt.legend()
+    plt.show()
+    print("Here is the correlation between the predicited and actual electrode voltage values:")
+    print(np.corrcoef(pred[:,0],z_held))
 
 
 
 
-    ########### Building our K's ###########
-    K_patient = correlation_matrix[:,electrodestart:electrodeend] #this gets all the electrodes that the patient has with their own correlation and that of others
-    Kalpha_alpha = K_patient[electrodestart:electrodeend,:] #gets all the rows that the patient has observed data for
-    if electrodestart == 0: #if the patient is the first (and thus all the nonobserved nodes are 'below' the observed ones)
-        Kbeta_alpha = K_patient[electrodeend:,:] # get all rows the patient doesnt have observed 
-        Y_true = Y_z_score[:,electrodeend:]
-    else:# else the patient is not the first (and thus all the nonobserved nodes are both 'below' and 'above' the observed ones in the correlation matrix)
-        Kbeta_alpha_1 = K_patient[0:electrodestart,:]
-        Kbeta_alpha_2 = K_patient[electrodeend:,:]
-        Kbeta_alpha = np.vstack((Kbeta_alpha_1,Kbeta_alpha_2))
-        # Also gets the true Z score values for comparision purposes
-        Y_true_1 = Y_z_score[0:electrodestart,:]
-        Y_true_2 = Y_z_score[electrodeend:,:]
-        Y_true = np.vstack((Y_true_1,Y_true_2))
-    ########### Using the forumla ###########
-    Y_patient = Y_z_score[:,electrodestart:electrodeend] #gets all the z_score values from electrodes the patient we did observed    
-    Yt = Y_patient.T #take the transpose of it
-    Kalpha_alpha_inv = np.linalg.inv(Kalpha_alpha) 
-    pred = ((Kbeta_alpha@Kalpha_alpha_inv)@Yt).T #using formula from paper
 
-    return pred,Y_z_score
 
+
+""" this is left over stuff
+num_nodes = xyz_clean.shape[0] #649
+    neigh = NearestNeighbors(n_neighbors=k).fit(xyz_clean)
+    indicesofneigh = neigh.kneighbors()[1] #gets the indices of the 10 (or k) neighbors of each node
+    # turn indices lists into pairwiase combos
+    all_edges = []
+    iter = 0
+    for indexs in indicesofneigh:
+        for num in indexs:
+            all_edges.append((iter,num))
+        iter += 1
+    G = nx.Graph()
+    nodes = np.arange(num_nodes)
+    G.add_nodes_from(nodes)
+    G.add_edges_from(all_edges)
+    Glaplacian = nx.linalg.laplacian_matrix(G).toarray()
+
+"""
 
