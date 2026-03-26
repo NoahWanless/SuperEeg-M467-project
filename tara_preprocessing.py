@@ -53,59 +53,94 @@ def get_just_ecog_data(registered_dir = Path("../SuperEeg-M467-project/registere
         ecogs.append(ecog['data'])
     return ecogs
 
-
-########### full_preprocessing: ###########
+########### full_preprocessing_hold: ###########
 # xyz: the output of get_electrode_normalized_loc(), or the list of normalized electrode locations
 # ecogs: the voltage data for all patients, for all electrodes and time
 # notch_size: the size of the notch we remove around desired frequencies
 # minus_mean: subtracts the mean from the voltage (True or False)
-# RETURNS:
+# pat_to_hold: One of two meanings:
+#       pat_to_hold = -1: this means we are not holding out any electrodes
+#       pat_to_hold = 0-13: this tells what patient to hold out a electrode from
+# elec_hold_seed: one of 3 meanings:
+#       elec_hold_seed = -1: we hold out the last electrode
+#       elec_hold_seed = -2: we hold out a random electrode from the patient
+#       elec_hold_seed = a generic value: for reproducable results, this is the index to pick what electrode to hold out,
+#                                         generally a value between 0-20 ish depending on how many the patient has.
+###### RETURNS: ######
 # xyz_clean: the normalized electrode locations cleaned out
-# mapping_clean #? I DONT KNOW WHAT THIS IS TARA IF YOU WANT TO ANSWER THAT THAT WOULD BE GREAT
-# kept_global_indices: the indexs of what electrodes were kept 
 # cleaned: the actual voltage data with certain electrodes removed (we use this var under the name dropped later)
-# patient_electrode_info: how many electordes each patient has recorded for use (#!CURRENTLY NOT BEING RETURNED)
-def full_preprocessing(ecogs,xyz,notch_size,minus_mean=False):
-
-    #Step one: apply the butternotch filter!
+# hold_out_file: this is the electrode info of the held out electrode, taken directly
+# global_held_index: the index of the held out electrode globally in the cleaned out data
+def full_preprocessing_hold(ecogs,xyz,notch_size,minus_mean=False,pat_to_hold=-1,elec_hold_seed=-1):
+    ######## Step one: apply the butternotch filter! ########
     sos = signal.butter(4, [59-notch_size, 60+notch_size], btype='bandstop', analog=False, 
                             output='sos', fs=1000)
     filtered = []
+    num_elec_pat = []
     for file in ecogs:
+        num_elec_pat.append(len(file))
         filtered.append(signal.sosfiltfilt(sos, file))
-    #Step two: kurtosis
-    cleaned = []
-    kept_global_indices = []
-    mapping_clean = []
+    print("Filter applied")
+    ######## Step two: kurtosis, and holding out ########
+    cleaned = [] #the cleaned data itself
     electrode_offset = 0
-    patient_electrode_info = []
-    for i, file in enumerate(filtered): #for each electrode we run through, get the filtered voltage and the index
+    kept_global_indices = [] #global indices of electrodes kept
+    for i, file in enumerate(filtered): #for each electrode we run through, get the filtered voltage and the index, and update things 
+        print(f"Looking at patient: {i}")
         n_electrodes = file.shape[1]
         k = kurtosis(file, axis=0)
-        good_idx = np.where(k <= 10)[0]
+        good_idx = np.where(k <= 10)[0] #these are local indices
+        ###### if we are holding out, record the electrode index, and the file
+        ###### for that one, along with removing the index from the big list
+        if pat_to_hold == i: 
+            if elec_hold_seed == -1:
+                elec_to_hold = good_idx[(len(good_idx) - 1)] #gets the last of the remaining element to remove (the index of it locally to this patient)
+                ind_of_hold = (len(good_idx) - 1)
+            elif elec_hold_seed == -2: #^ this is random seeding, so we choose a random value
+                rand_ind = np.random.randint(0, len(good_idx)) #the high value is exculsive 
+                elec_to_hold = good_idx[rand_ind]
+                ind_of_hold = rand_ind
+            else:#^ this is manuel choosing of the elec to hold out
+                if elec_hold_seed < 0 or elec_hold_seed > (len(good_idx) - 1):
+                    raise ValueError("Your 'elec_hold_seed' value is out of range, try something else, mnore then likely a smaller value")
+                elec_to_hold = good_idx[elec_hold_seed] 
+                ind_of_hold = elec_hold_seed #this is the index (from the good_idx array) of the thing we are holding, so we are remvoing it from the good_idx array
         
-        cleaned_file = file[:, good_idx]
+            hold_out_file = file[:, elec_to_hold]
+            good_idx = np.delete(good_idx, ind_of_hold)
+        
+        global_good_idx = good_idx + electrode_offset #now these guys are global indices (this is for remembering what positions to keep)
+        kept_global_indices.extend(global_good_idx)
+        if pat_to_hold == i: 
+            kept_global_indices.append(elec_to_hold + electrode_offset)
+        electrode_offset += n_electrodes
+
+        cleaned_file = file[:, good_idx] #creates the cleaned file 
         if minus_mean:
-            cleaned.append(car(cleaned_file)) #subtracts the mean
+            cleaned.append(car(cleaned_file)) #subtracts the mean if desired
         else:
             cleaned.append(cleaned_file)
         
-        global_good_idx = good_idx + electrode_offset
-        kept_global_indices.extend(global_good_idx)
-        electrode_offset += n_electrodes
-        patient_electrode_info.append(len(good_idx)) #records the number of kept electrodes
-        for j in range(len(good_idx)):  # number of KEPT electrodes
-            mapping_clean.append([len(mapping_clean), i])  # i = subject index
+        ##### This does the final addition of the hold out file to the list of cleaned files
+        if pat_to_hold == i:
+            global_held_index = 0
+            for pat in cleaned: #gets the total num of electrodes so far, this will be our index for the held out file we will add
+                global_held_index += pat.shape[1] #this is to return 
+            if minus_mean:
+                cleaned.append(car(hold_out_file)) #subtracts the mean
+                hold_out_file = car(hold_out_file)
+            else: #these two require a extra dimension for consistancy with everything
+                cleaned.append(hold_out_file)
+                
+        
 
-    mapping_clean = np.array(mapping_clean)
-    kept_global_indices = np.array(kept_global_indices) #!THIS MUST GET RETURNED FOR FUTURE USE
+    ##### updating all the final elements to return #####
+    kept_global_indices = np.array(kept_global_indices) #i dont think the order here matters
     xyz_clean = xyz[kept_global_indices]
+    #! global_held_index, switch to returning this if you want to get the global index of the held out file
+    return xyz_clean, cleaned, hold_out_file, global_held_index
 
-    #print(xyz_clean.shape)        # (n_kept_electrodes, 3)
-    #print(mapping_clean.shape)    # (n_kept_electrodes, 2)
-    
-    return xyz_clean, mapping_clean, kept_global_indices, cleaned
-    #step three is remove patients with 2 electrodes or less, but we already know they all have way more then that
+
     
 
 # All three inputs are part of the outputs of the full_preprocessing() function
@@ -145,104 +180,6 @@ def make_rbf_correlation_matrix(xyz_clean,dropped,mapping_clean):
 
 
 
-#TODO: MAKE A VERSION THAT ADDS A NEW 'PATIENT, AND THIS ONE WILL BE FAKE'
-#TODO: MAKE A VERSION THAT ADDS A NEW 'PATIENT, AND THIS ONE WILL BE FAKE'
-
-########### full_preprocessing: ###########
-# xyz: the output of get_electrode_normalized_loc(), or the list of normalized electrode locations
-# ecogs: the voltage data for all patients, for all electrodes and time
-# notch_size: the size of the notch we remove around desired frequencies
-# minus_mean: subtracts the mean from the voltage (True or False)
-# pat_to_hold: the patient 0-13, to hold out the final electrode from to use for validation
-# RETURNS:
-# xyz_clean: the normalized electrode locations cleaned out
-# mapping_clean: ??? 
-# kept_global_indices: the indexs of what electrodes were kept 
-# cleaned: the actual voltage data with certain electrodes removed (we use this var under the name dropped later)
-# patient_electrode_info: how many electordes each patient has recorded for use (#!CURRENTLY NOT BEING RETURNED)
-# hold_out_file: this is the electrode info of the held out electrode, taken directly
-#! NOTE THIS IS FROM THE UNFILTED DATA, NOT THE FILTERED ONES I THINK?
-def full_preprocessing_hold(ecogs,xyz,notch_size,minus_mean=False,pat_to_hold=-1):
-    ######## Step one: apply the butternotch filter! ########
-    sos = signal.butter(4, [59-notch_size, 60+notch_size], btype='bandstop', analog=False, 
-                            output='sos', fs=1000)
-    filtered = []
-    num_elec_pat = []
-    for file in ecogs:
-        num_elec_pat.append(len(file))
-        filtered.append(signal.sosfiltfilt(sos, file))
-    print("Filter applied")
-    ######## Step two: kurtosis, and holding out ########
-    cleaned = [] #the cleaned data itself
-    kept_global_indices = [] #global indices of electrodes kept
-    mapping_clean = []
-    electrode_offset = 0
-    patient_electrode_info = []
-    for i, file in enumerate(filtered): #for each electrode we run through, get the filtered voltage and the index, and update things 
-        print(f"Looking at patient: {i}")
-        n_electrodes = file.shape[1]
-        k = kurtosis(file, axis=0)
-        good_idx = np.where(k <= 10)[0] #these are local indices
-        ###### if we are holding out, record the electrode index, and the file
-        ###### for that one, along with removing the index from the big list
-        if pat_to_hold == i: 
-            elec_to_hold = good_idx[(len(good_idx) - 1)] #gets the last of the remaining element to remove (the index of it locally to this patient)
-            #kurtosis_diff = n_electrodes - len(good_idx) #this is something that was here and i dont know what it was for
-            hold_out_file = file[:, elec_to_hold]
-            good_idx = np.delete(good_idx, (len(good_idx) - 1))
-            
-        ####### updating the indexs kept globally #######
-        global_good_idx = good_idx + electrode_offset #now these guys are global indices
-        kept_global_indices.extend(global_good_idx)
-
-        ######## Appendimg to the list of global indices ########
-        if pat_to_hold == i: 
-            kept_global_indices.append(elec_to_hold + electrode_offset)  #this addes the global index of the held out one onre
-            global_held = (elec_to_hold + electrode_offset) #the global index of the held out thing but of the orginal dataset, not the one with all these things removed(via kurtosis)
-
-        ##### updating patient electrode info #####
-        electrode_offset += n_electrodes
-        patient_electrode_info.append(len(good_idx)) #records the number of kept electrodes
-        for j in range(len(good_idx)):  # number of KEPT electrodes, add what ones were kept
-            if i < pat_to_hold:
-                mapping_clean.append([len(mapping_clean), i])  # i = subject index    
-            elif i == pat_to_hold:
-                mapping_clean.append([len(mapping_clean), i])  # i = subject index    
-            else:
-                mapping_clean.append([len(mapping_clean), i+1])        
-
-        cleaned_file = file[:, good_idx] #creates the cleaned file 
-
-        if minus_mean:
-            cleaned.append(car(cleaned_file)) #subtracts the mean if desired
-        else:
-            cleaned.append(cleaned_file)
-        
-        ##### This does the final addition of the hold out file to the list of cleaned files
-        if pat_to_hold == i:
-            patient_electrode_info.append(1) #also adds the fakes patients info to the thing
-            mapping_clean.append([len(mapping_clean), i+1]) #this appends the fake patient info to the mapping clean data
-            global_held_index = 0
-            for pat in cleaned: #gets the total num of electrodes so far, this will be our index for the held out file we will add
-                global_held_index += pat.shape[1]
-            if minus_mean:
-                cleaned.append(car(hold_out_file)) #subtracts the mean
-                hold_out_file = car(hold_out_file)
-                #print(car(hold_out_file))
-            else: #these two require a extra dimension for consistancy with everything
-                cleaned.append(hold_out_file)
-                
-        
-
-    ##### updating all the final elements to return #####
-    mapping_clean = np.array(mapping_clean)
-    kept_global_indices = np.array(kept_global_indices) 
-    xyz_clean = xyz[kept_global_indices]
-    #! global_held_index, switch to returning this if you want to get the global index of the held out file
-    return xyz_clean, mapping_clean, kept_global_indices, cleaned, hold_out_file, global_held_index
-
-
-
 
 # All three inputs are part of the outputs of the full_preprocessing() function
 # xyz_clean: the normalized electrode locations cleaned out
@@ -250,7 +187,7 @@ def full_preprocessing_hold(ecogs,xyz,notch_size,minus_mean=False,pat_to_hold=-1
 # mapping_clean: this one i dont know
 # this returns the list of the patient correlation matrices but only of the size for the 
 # number of electrodes for that patients
-def make_patient_correlation_matrix(xyz_clean,dropped,mapping_clean):
+def make_patient_correlation_matrix(xyz_clean,dropped):
     #create RBF correlation matrix
     # Euclidean distance matrix (714x714)
     #dist_matrix = cdist(xyz_clean, xyz_clean, metric='euclidean')
