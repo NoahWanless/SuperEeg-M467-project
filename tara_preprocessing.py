@@ -17,6 +17,72 @@ def car(data):
     return data - data.mean(axis=0, keepdims=True) 
 
 
+def remove_duplicates(ecogs, xyz):
+    """
+    Remove duplicate electrodes based on xyz coordinates.
+    Keeps first occurrence, removes same index from both ecogs and xyz.
+    """
+    xyz_arr  = np.array(xyz)   # shape: (n_electrodes, 3)
+
+    # Get unique indices from xyz 
+    _, unique_idx = np.unique(xyz_arr, axis=0, return_index=True)
+    unique_idx = np.sort(unique_idx)  # preserve original order #! CHECK IF THIS IS EVEN NEEDED
+
+    # Apply to xyz (numpy array)
+    filtered_xyz = xyz_arr[unique_idx]
+
+    #turn local indicies to global
+    shapes = []
+    for i,ecog in enumerate(ecogs):
+        if ecog.ndim == 1: #if the patient is the fake one, just append a one to the list
+            shapes.append(1)
+            ecogs[i] = np.array([ecog]) #this adds a extra dim for indexing reasons
+        else:
+            shapes.append(ecog.shape[1])
+    boundaries = np.cumsum(shapes)
+    print(boundaries)
+    patient_ids = np.searchsorted(boundaries, unique_idx, side='right')
+    boundaries = [0] + list(boundaries) #adding the 0 for the first patient
+    filtered_ecogs = [
+        ecogs[p][:, unique_idx[patient_ids == p] - boundaries[p]]
+        for p in range(len(ecogs))
+    ]
+    for i,temp in enumerate(filtered_ecogs):
+        if temp.shape[1] == 1:
+            print("temp.shape")
+            print(temp.shape)
+            print(temp.flatten())
+            print(temp)
+            filtered_ecogs[i] = temp.flatten()
+            print('flattinging')
+
+    return filtered_ecogs, filtered_xyz
+def remove_duplicates_2(ecogs, xyz):
+    """
+    Remove duplicate electrodes based on xyz coordinates.
+    Keeps first occurrence, removes same index from both ecogs and xyz.
+    """
+    xyz_arr  = np.array(xyz)   # shape: (n_electrodes, 3)
+
+    # Get unique indices from xyz 
+    _, unique_idx = np.unique(xyz_arr, axis=0, return_index=True)
+    unique_idx = np.sort(unique_idx)  # preserve original order
+
+    # Apply to xyz (numpy array)
+    filtered_xyz = xyz_arr[unique_idx]
+
+    #turn local indicies to global
+    boundaries = np.cumsum([ecog.shape[1] for ecog in ecogs])
+    patient_ids = np.searchsorted(boundaries, unique_idx, side='right')
+
+    filtered_ecogs = [
+        ecogs[p][:, unique_idx[patient_ids == p] - ([0] + list(boundaries))[p]]
+        for p in range(len(ecogs))
+    ]
+
+    return filtered_ecogs, filtered_xyz
+
+
 ########### get_single_registered_out: ###########
 # takes in the directory path (if given) to the regester outputs and grabs all the 
 # patients electrode locations
@@ -108,6 +174,7 @@ def full_preprocessing_hold(ecogs,xyz,notch_size,minus_mean=False,pat_to_hold=-1
         
             hold_out_file = file[:, elec_to_hold]
             good_idx = np.delete(good_idx, ind_of_hold)
+            num_elec_after_hold = len(good_idx) #this is used to calc the location of the electrode we held out in the prediction function
         
         global_good_idx = good_idx + electrode_offset #now these guys are global indices (this is for remembering what positions to keep)
         kept_global_indices.extend(global_good_idx)
