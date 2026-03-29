@@ -154,7 +154,6 @@ def create_u(k,r,lamb,patient_corr_mat,xyz_clean,object_func=object_func,trainin
     loss_list = []
     grads = []
     print("Optimizing U")
-    print(U)
     for step in tqdm(range(training_steps)):
         optimizer.zero_grad()
         z = object_func(C,U,L,lamb,patient_node_num) #this is our loss function
@@ -210,9 +209,16 @@ def single_patient_prediction_pure(patient,ecogs,correlation_matrix):
     indices_we_pred = []
     for i,pat in enumerate(ecogs):
         if i < patient:
-            patient_node_start += pat.shape[1]
+            if pat.ndim == 2:
+                patient_node_start += pat.shape[1]
+            else:
+                patient_node_start += 1
         if i <=patient:
-            patient_node_end += pat.shape[1]
+            if pat.ndim == 2:
+                patient_node_end += pat.shape[1]
+            else: #if this is the fake patient, just add 1
+                patient_node_end += 1
+    
     for i in range(correlation_matrix.shape[0]): #for each electrode
         if i < patient_node_start or i > patient_node_end:
             indices_we_pred.append(i) #these are the ones we are prediciting
