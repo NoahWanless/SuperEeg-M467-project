@@ -145,7 +145,7 @@ def full_preprocessing_hold(ecogs,xyz,notch_size,minus_mean=False,pat_to_hold=-1
     num_elec_pat = []
     for file in ecogs:
         num_elec_pat.append(len(file))
-        filtered.append(signal.sosfiltfilt(sos, file))
+        filtered.append(signal.sosfiltfilt(sos, file,axis=0))
     print("Filter applied")
     ######## Step two: kurtosis, and holding out ########
     cleaned = [] #the cleaned data itself
