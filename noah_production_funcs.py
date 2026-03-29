@@ -154,6 +154,7 @@ def create_u(k,r,lamb,patient_corr_mat,xyz_clean,object_func=object_func,trainin
     loss_list = []
     grads = []
     print("Optimizing U")
+    print(U)
     for step in tqdm(range(training_steps)):
         optimizer.zero_grad()
         z = object_func(C,U,L,lamb,patient_node_num) #this is our loss function
