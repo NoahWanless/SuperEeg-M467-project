@@ -72,8 +72,6 @@ def create_lapaican_rbf(xyz_clean,lamb):
     G = nx.Graph()
     G.add_nodes_from(nodes) #adds all the nodes
     ######### Now connecting the nodes #########
-    all_edges = []
-    iter = 0
     for x,p1 in zip(nodes,xyz_clean):
         for y,p2 in zip(nodes,xyz_clean):
             if x!=y: #this way nodes are not connected to itself
@@ -95,7 +93,7 @@ def object_func(C,U,L,lamb,patient_node_num):
         c = C[i] #each patient correlation matrix
         num_nodes = patient_node_num[i]
         u = U[iter:iter+num_nodes,:] #all columns of rows iter+num of nodes + 1 
-        sum = sum + (torch.linalg.norm((u@u.T - c),ord='fro'))**2 #+lamb*torch.trace(U.T@L@U)
+        sum = sum + (torch.linalg.norm((u@u.T - c),ord='fro'))**2 
         iter = iter + num_nodes
     sum = sum + lamb*torch.trace(U.T@L@U)
     return sum
