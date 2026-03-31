@@ -2,7 +2,6 @@ from scipy.stats import kurtosis
 from scipy import signal
 from pathlib import Path
 import scipy
-import ants
 import numpy as np
 import scipy
 import pandas as pd
@@ -26,46 +25,6 @@ def remove_duplicates(ecogs, xyz):
 
     # Get unique indices from xyz 
     _, unique_idx = np.unique(xyz_arr, axis=0, return_index=True)
-    unique_idx = np.sort(unique_idx)  # preserve original order #! CHECK IF THIS IS EVEN NEEDED
-
-    # Apply to xyz (numpy array)
-    filtered_xyz = xyz_arr[unique_idx]
-
-    #turn local indicies to global
-    shapes = []
-    for i,ecog in enumerate(ecogs):
-        if ecog.ndim == 1: #if the patient is the fake one, just append a one to the list
-            shapes.append(1)
-            ecogs[i] = np.array([ecog]) #this adds a extra dim for indexing reasons
-        else:
-            shapes.append(ecog.shape[1])
-    boundaries = np.cumsum(shapes)
-    print(boundaries)
-    patient_ids = np.searchsorted(boundaries, unique_idx, side='right')
-    boundaries = [0] + list(boundaries) #adding the 0 for the first patient
-    filtered_ecogs = [
-        ecogs[p][:, unique_idx[patient_ids == p] - boundaries[p]]
-        for p in range(len(ecogs))
-    ]
-    for i,temp in enumerate(filtered_ecogs):
-        if temp.shape[1] == 1:
-            print("temp.shape")
-            print(temp.shape)
-            print(temp.flatten())
-            print(temp)
-            filtered_ecogs[i] = temp.flatten()
-            print('flattinging')
-
-    return filtered_ecogs, filtered_xyz
-def remove_duplicates_2(ecogs, xyz):
-    """
-    Remove duplicate electrodes based on xyz coordinates.
-    Keeps first occurrence, removes same index from both ecogs and xyz.
-    """
-    xyz_arr  = np.array(xyz)   # shape: (n_electrodes, 3)
-
-    # Get unique indices from xyz 
-    _, unique_idx = np.unique(xyz_arr, axis=0, return_index=True)
     unique_idx = np.sort(unique_idx)  # preserve original order
 
     # Apply to xyz (numpy array)
@@ -74,9 +33,9 @@ def remove_duplicates_2(ecogs, xyz):
     #turn local indicies to global
     boundaries = np.cumsum([ecog.shape[1] for ecog in ecogs])
     patient_ids = np.searchsorted(boundaries, unique_idx, side='right')
-
+    boundaries = ([0] + list(boundaries))
     filtered_ecogs = [
-        ecogs[p][:, unique_idx[patient_ids == p] - ([0] + list(boundaries))[p]]
+        ecogs[p][:, unique_idx[patient_ids == p] - boundaries[p]]
         for p in range(len(ecogs))
     ]
 
@@ -119,95 +78,92 @@ def get_just_ecog_data(registered_dir = Path("../SuperEeg-M467-project/registere
         ecogs.append(ecog['data'])
     return ecogs
 
-########### full_preprocessing_hold: ###########
+########### preprocessing: ###########
 # xyz: the output of get_electrode_normalized_loc(), or the list of normalized electrode locations
 # ecogs: the voltage data for all patients, for all electrodes and time
 # notch_size: the size of the notch we remove around desired frequencies
 # minus_mean: subtracts the mean from the voltage (True or False)
-# pat_to_hold: One of two meanings:
-#       pat_to_hold = -1: this means we are not holding out any electrodes
-#       pat_to_hold = 0-13: this tells what patient to hold out a electrode from
-# elec_hold_seed: one of 3 meanings:
-#       elec_hold_seed = -1: we hold out the last electrode
-#       elec_hold_seed = -2: we hold out a random electrode from the patient
-#       elec_hold_seed = a generic value: for reproducable results, this is the index to pick what electrode to hold out,
-#                                         generally a value between 0-20 ish depending on how many the patient has.
 ###### RETURNS: ######
 # xyz_clean: the normalized electrode locations cleaned out
 # cleaned: the actual voltage data with certain electrodes removed (we use this var under the name dropped later)
-# hold_out_file: this is the electrode info of the held out electrode, taken directly
-# global_held_index: the index of the held out electrode globally in the cleaned out data
-def full_preprocessing_hold(ecogs,xyz,notch_size,minus_mean=False,pat_to_hold=-1,elec_hold_seed=-1):
+def preprocessing(ecogs,xyz,notch_size,minus_mean=False):
+    print("Processing Patients...")
     ######## Step one: apply the butternotch filter! ########
     sos = signal.butter(4, [59-notch_size, 60+notch_size], btype='bandstop', analog=False, 
                             output='sos', fs=1000)
     filtered = []
-    num_elec_pat = []
     for file in ecogs:
-        num_elec_pat.append(len(file))
         filtered.append(signal.sosfiltfilt(sos, file,axis=0))
-    print("Filter applied")
-    ######## Step two: kurtosis, and holding out ########
+    ######## Step two: kurtosis ########
     cleaned = [] #the cleaned data itself
     electrode_offset = 0
     kept_global_indices = [] #global indices of electrodes kept
     for i, file in enumerate(filtered): #for each electrode we run through, get the filtered voltage and the index, and update things 
-        print(f"Looking at patient: {i}")
         n_electrodes = file.shape[1]
         k = kurtosis(file, axis=0)
         good_idx = np.where(k <= 10)[0] #these are local indices
-        ###### if we are holding out, record the electrode index, and the file
-        ###### for that one, along with removing the index from the big list
-        if pat_to_hold == i: 
-            if elec_hold_seed == -1:
-                elec_to_hold = good_idx[(len(good_idx) - 1)] #gets the last of the remaining element to remove (the index of it locally to this patient)
-                ind_of_hold = (len(good_idx) - 1)
-            elif elec_hold_seed == -2: #^ this is random seeding, so we choose a random value
-                rand_ind = np.random.randint(0, len(good_idx)) #the high value is exculsive 
-                elec_to_hold = good_idx[rand_ind]
-                ind_of_hold = rand_ind
-            else:#^ this is manuel choosing of the elec to hold out
-                if elec_hold_seed < 0 or elec_hold_seed > (len(good_idx) - 1):
-                    raise ValueError("Your 'elec_hold_seed' value is out of range, try something else, mnore then likely a smaller value")
-                elec_to_hold = good_idx[elec_hold_seed] 
-                ind_of_hold = elec_hold_seed #this is the index (from the good_idx array) of the thing we are holding, so we are remvoing it from the good_idx array
-        
-            hold_out_file = file[:, elec_to_hold]
-            good_idx = np.delete(good_idx, ind_of_hold)
-            num_elec_after_hold = len(good_idx) #this is used to calc the location of the electrode we held out in the prediction function
-        
         global_good_idx = good_idx + electrode_offset #now these guys are global indices (this is for remembering what positions to keep)
-        kept_global_indices.extend(global_good_idx)
-        if pat_to_hold == i: 
-            kept_global_indices.append(elec_to_hold + electrode_offset)
-        electrode_offset += n_electrodes
+        kept_global_indices.extend(global_good_idx) #concatenate them to the list
+        electrode_offset += n_electrodes #update the offset
 
         cleaned_file = file[:, good_idx] #creates the cleaned file 
         if minus_mean:
             cleaned.append(car(cleaned_file)) #subtracts the mean if desired
         else:
             cleaned.append(cleaned_file)
-        
-        ##### This does the final addition of the hold out file to the list of cleaned files
-        if pat_to_hold == i:
-            global_held_index = 0
-            for pat in cleaned: #gets the total num of electrodes so far, this will be our index for the held out file we will add
-                global_held_index += pat.shape[1] #this is to return 
-            if minus_mean:
-                cleaned.append(car(hold_out_file)) #subtracts the mean
-                hold_out_file = car(hold_out_file)
-            else: #these two require a extra dimension for consistancy with everything
-                cleaned.append(hold_out_file)
-                
-        
-
+    
     ##### updating all the final elements to return #####
     kept_global_indices = np.array(kept_global_indices) #i dont think the order here matters
     xyz_clean = xyz[kept_global_indices]
-    #! global_held_index, switch to returning this if you want to get the global index of the held out file
-    return xyz_clean, cleaned, hold_out_file, global_held_index
+    print('Preprocessing done')
+    return xyz_clean, cleaned
 
 
+########### hold_out: ###########
+# xyz_clean: the output of get_electrode_normalized_loc(), or the list of normalized electrode locations
+# cleaned: the voltage data for all patients, for all electrodes and time
+# pat_hold: The patient to hold electrodes from 
+# elecs_to_hold: The LIST of local electrode indices to hold out for this patient
+###### RETURNS: ######
+# cleaned,xyz_clean, the same as input, but with the elements moved to the needed locations
+# location_offset: this is the GLOBAL index where the fake patient begans, and lasts for len(elecs_to_hold) STARTING FROM location_offset
+###### Notes: ######
+# This is how it works: from patient 'pat_hold' we remove the electrodes given, and then reattach then, as there own
+# so called 'patient' to the list 'cleaned'. This 'patient' is ALWAYS place directly after the patient we are removing it from
+# the same process is applied to the electrode locations, shuffling the indices that they live in so that they go to the right spots
+# ! SUPER IMPORTANT THIS FUNCTION CAN ONLY BE RUN ONCE, BECAUSE PYTHON ASSGINS VARS BY REFERENCE I CANT GET THIS TO
+# ! NOT EDIT THE ORGINAL VARAIBLES PASSED IN AT THE SAME TIME, SO TO AVOID MISTAKES NEVEERRRRRRRRR EVERRRRRRR RUN THIS MORE THEN ONCE
+# ! UNLESS, YOU FIRST REDEFINE THE VARIABLES YOU ARE PASSING INTO THIS FUNCTION !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+
+# ! ALSO THIS HAS NOT BEEN TEST FOR 1 ELECTRODE, SO DONT DO THAT UNTIL I TEST IT
+def hold_out(xyz_data,ecog_data,pat_hold,elecs_to_hold):
+    cleaned = ecog_data #this is needed so changes are not made inplace so reruns of the function dont break things
+    xyz_clean = xyz_data
+    ######### Find Electrode offset for this patient for global indices #########
+    elec_offset = 0 #electrode offset to turn local into global indices
+    for i in range(len(cleaned)): #for each patient
+        if i < pat_hold:
+            elec_offset+=cleaned[i].shape[1] #adds the number of electrodes
+    global_elecs_to_hold = np.array(elecs_to_hold) + elec_offset 
+    ######### Find all held out electrodes and remove them (from cleaned)#########
+    pat = cleaned[pat_hold] #this is the version of the file we will edit and remove the electrodes from
+    held_out_elcs =[] #list where we will store the held out electrode data
+    for elec in elecs_to_hold:
+        held_out_elcs.append(cleaned[pat_hold][:,elec]) #all timeseires for that electrode
+    pat = np.delete(pat, elecs_to_hold,axis=1) #removes that electrode from the patients data
+    held_out_elcs = np.array(held_out_elcs).T #to get it the right orinentation    
+    cleaned[pat_hold] = pat
+    cleaned.insert(pat_hold+1,held_out_elcs) #pat_hold+1 will be the index of the next patient, thus shifting everything over one
+    ######### Find the location to put the electrodes and move them lists #########
+    locations_held = xyz_clean[global_elecs_to_hold]
+    xyz_clean = np.delete(xyz_clean, global_elecs_to_hold,axis=0) 
+    location_offset = 0 #this is the location offset we will use to figure out were to put the location data now (for the position between patient pat_hold, and pat_hold+1)
+    for i in range(len(cleaned)): #for each patient
+        if i <= pat_hold:
+            location_offset+=cleaned[i].shape[1] #adds the number of electrodes
+    xyz_clean = np.insert(xyz_clean,location_offset,values=locations_held,axis=0)
+    return cleaned,xyz_clean,location_offset
     
 
 # All three inputs are part of the outputs of the full_preprocessing() function
@@ -291,6 +247,7 @@ def make_patient_correlation_matrix(xyz_clean,dropped):
 # this function ideally needs only to be run once to get the data
 # !NOTE: this function uses ALL electrode locations, so some of them, if they are bad,
 # ! will not be pulled out but need to be done so later, remember this!
+'''
 def getdata(project_root,brains_root,locs_root):
     # Single destination folder for all registered outputs
     all_registered_dir = project_root / "registered_outputs"
@@ -350,3 +307,4 @@ def getdata(project_root,brains_root,locs_root):
         print(f"[{pid}] locs saved to: {out_npy_path}  shape={locs_fixed_mm.shape}")
 
     print("\nAll done.")
+    '''
