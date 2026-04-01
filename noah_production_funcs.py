@@ -1,10 +1,12 @@
 from pathlib import Path
 import numpy as np
+import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from itertools import combinations
 import networkx as nx
 from sklearn.neighbors import NearestNeighbors
+from sklearn.metrics import mean_squared_error, r2_score
 from tqdm import tqdm
 import torch
 import torch.nn.utils.parametrize as parametrize
@@ -294,6 +296,420 @@ def u_metric_display(U_det,cleaned,file_held,loss):
 
 
 
+
+
+##########################
+# DEBUGGING FUNCTION
+##########################
+def test_single_hyperparameter(
+    k,
+    r,
+    lamb,
+    patient_corr_mat,
+    xyz_clean,
+    ecogs,
+    patient_idx=0,
+    training_steps=100,
+    lr=0.01,
+    graph='knn'
+):
+    """
+    Test a single hyperparameter combination with detailed error messages.
+    Useful for debugging before running full grid search.
+    
+    Args:
+        k, r, lamb: hyperparameters to test
+        patient_corr_mat: individual patient correlation matrices
+        xyz_clean: normalized electrode locations
+        ecogs: ECoG data for all patients
+        patient_idx: which patient to evaluate on
+        training_steps: training steps (default 100 for quick testing)
+        lr: learning rate
+        graph: 'knn' or 'rbf'
+    """
+    print(f"\nTesting k={k}, r={r}, lamb={lamb}...")
+    print(f"Patient index: {patient_idx}")
+    print(f"Number of patients: {len(ecogs)}")
+    print(f"xyz_clean shape: {xyz_clean.shape}")
+    print(f"patient_corr_mat length: {len(patient_corr_mat)}")
+    
+    try:
+        print("\n[1/4] Creating U matrix...")
+        U_det, loss = create_u(
+            k=k,
+            r=r,
+            lamb=lamb,
+            patient_corr_mat=patient_corr_mat,
+            xyz_clean=xyz_clean,
+            object_func=object_func,
+            training_steps=training_steps,
+            lr=lr,
+            graph=graph
+        )
+        print(f"  ✓ U matrix shape: {U_det.shape}")
+        
+        print("[2/4] Computing correlation matrix...")
+        U_corr_matrix = U_det @ U_det.T
+        if torch.is_tensor(U_corr_matrix):
+            U_corr_matrix = U_corr_matrix.detach().numpy()
+        print(f"  ✓ Correlation matrix shape: {U_corr_matrix.shape}")
+        
+        print("[3/4] Getting predictions...")
+        pred, indices = single_patient_prediction_pure(patient_idx, ecogs, U_corr_matrix)
+        print(f"  ✓ Predictions shape: {pred.shape}")
+        print(f"  ✓ Number of predicted electrodes: {len(indices)}")
+        
+        print("[4/4] Evaluating predictions...")
+        y_actual = ecogs[patient_idx]
+        row_means = np.mean(y_actual, axis=0, keepdims=True)
+        row_stds = np.std(y_actual, axis=0, keepdims=True)
+        y_actual_z = (y_actual - row_means) / row_stds
+        
+        metrics = evaluate_predictions(pred, y_actual_z)
+        print(f"  ✓ Evaluation complete!")
+        
+        print("\n" + "="*70)
+        print("SUCCESS! Results:")
+        print("="*70)
+        print(f"Correlation:  {metrics['correlation']:.6f}")
+        print(f"R² Score:     {metrics['r2_score']:.6f}")
+        print(f"MSE:          {metrics['mse']:.6f}")
+        print(f"RMSE:         {metrics['rmse']:.6f}")
+        print(f"Final Loss:   {loss[-1].item() if isinstance(loss[-1], torch.Tensor) else loss[-1]:.6f}")
+        
+        return metrics
+        
+    except Exception as e:
+        import traceback
+        print("\n" + "="*70)
+        print("ERROR!")
+        print("="*70)
+        print(f"Error message: {str(e)}")
+        print(f"\nFull traceback:\n{traceback.format_exc()}")
+        return None
+
+
+
+# Evaluates predictions using correlation, R², and MSE metrics
+def evaluate_predictions(predictions, actual_values):
+    """
+    Evaluate predictions against actual values using multiple metrics.
+    Handles shape mismatches by aligning along both dimensions.
+    
+    Args:
+        predictions: predicted values (array-like)
+        actual_values: ground truth values (array-like)
+    
+    Returns:
+        dict with 'correlation', 'r2_score', 'mse'
+    """
+    from sklearn.metrics import mean_squared_error, r2_score
+    from scipy.stats import pearsonr
+    
+    # Ensure both are 2D (timesteps x channels)
+    if predictions.ndim == 1:
+        predictions = predictions.reshape(-1, 1)
+    if actual_values.ndim == 1:
+        actual_values = actual_values.reshape(-1, 1)
+    
+    # Handle shape mismatch: only compare over matching timesteps and min channels
+    n_timesteps = min(predictions.shape[0], actual_values.shape[0])
+    n_channels = min(predictions.shape[1], actual_values.shape[1])
+    
+    pred_aligned = predictions[:n_timesteps, :n_channels]
+    actual_aligned = actual_values[:n_timesteps, :n_channels]
+    
+    # Flatten for correlation
+    pred_flat = pred_aligned.flatten()
+    actual_flat = actual_aligned.flatten()
+    
+    # Calculate correlation using scipy (more robust)
+    try:
+        correlation, _ = pearsonr(pred_flat, actual_flat)
+    except Exception as e:
+        correlation = np.nan
+    
+    # Calculate R² score
+    try:
+        r2 = r2_score(actual_flat, pred_flat)
+    except Exception as e:
+        r2 = np.nan
+    
+    # Calculate Mean Squared Error
+    try:
+        mse = mean_squared_error(actual_flat, pred_flat)
+        rmse = np.sqrt(mse)
+    except Exception as e:
+        mse = np.nan
+        rmse = np.nan
+    
+    return {
+        'correlation': correlation,
+        'r2_score': r2,
+        'mse': mse,
+        'rmse': rmse
+    }
+
+
+# Main hyperparameter tuning function
+def hyperparameter_tuning(
+    k_range,
+    r_range,
+    lamb_range,
+    patient_corr_mat,
+    xyz_clean,
+    ecogs,
+    correlation_matrix,
+    patient_idx=0,
+    training_steps=500,
+    lr=0.01,
+    graph='knn',
+    verbose=True
+):
+    """
+    Perform grid search hyperparameter tuning for the U matrix model.
+    
+    Args:
+        k_range: list or range of k values to test
+        r_range: list or range of r values to test
+        lamb_range: list or range of lambda values to test
+        patient_corr_mat: individual patient correlation matrices
+        xyz_clean: normalized electrode locations
+        ecogs: ECoG data for all patients
+        correlation_matrix: full correlation matrix
+        patient_idx: which patient to evaluate on (default 0)
+        training_steps: training steps per model
+        lr: learning rate
+        graph: 'knn' or 'rbf'
+        verbose: print progress
+    
+    Returns:
+        dict with:
+            - 'results': DataFrame of all results
+            - 'best_params': best parameters dict
+            - 'best_metrics': metrics of best model
+            - 'all_models': all trained U matrices
+    """
+    
+    from sklearn.metrics import mean_squared_error, r2_score
+    import pandas as pd
+    
+    results = []
+    models = {}
+    
+    total_combos = len(k_range) * len(r_range) * len(lamb_range)
+    combo_num = 0
+    
+    print(f"Starting hyperparameter tuning with {total_combos} combinations...")
+    print(f"Testing on patient {patient_idx}\n")
+    
+    for k in k_range:
+        for r in r_range:
+            for lamb in lamb_range:
+                combo_num += 1
+                if verbose:
+                    print(f"[{combo_num}/{total_combos}] Training k={k}, r={r}, lamb={lamb}...")
+                
+                try:
+                    # Train the U matrix
+                    U_det, loss = create_u(
+                        k=k,
+                        r=r,
+                        lamb=lamb,
+                        patient_corr_mat=patient_corr_mat,
+                        xyz_clean=xyz_clean,
+                        object_func=object_func,
+                        training_steps=training_steps,
+                        lr=lr,
+                        graph=graph
+                    )
+                    
+                    # Get predictions for test patient
+                    U_corr_matrix = U_det @ U_det.T
+                    if torch.is_tensor(U_corr_matrix):
+                        U_corr_matrix = U_corr_matrix.detach().numpy()
+                    
+                    pred, indices = single_patient_prediction_pure(patient_idx, ecogs, U_corr_matrix)
+                    
+                    # Get actual values for this patient
+                    y_actual = ecogs[patient_idx]
+                    row_means = np.mean(y_actual, axis=0, keepdims=True)
+                    row_stds = np.std(y_actual, axis=0, keepdims=True)
+                    y_actual_z = (y_actual - row_means) / row_stds
+                    
+                    # Evaluate predictions
+                    metrics = evaluate_predictions(pred, y_actual_z)
+                    
+                    # Store results
+                    result = {
+                        'k': k,
+                        'r': r,
+                        'lamb': lamb,
+                        'correlation': metrics['correlation'],
+                        'r2_score': metrics['r2_score'],
+                        'mse': metrics['mse'],
+                        'rmse': metrics['rmse'],
+                        'final_loss': loss[-1].item() if isinstance(loss[-1], torch.Tensor) else loss[-1]
+                    }
+                    results.append(result)
+                    models[f"k{k}_r{r}_lamb{lamb}"] = U_det
+                    
+                    if verbose:
+                        print(f"  ✓ Correlation: {metrics['correlation']:.4f}, "
+                              f"R²: {metrics['r2_score']:.4f}, "
+                              f"RMSE: {metrics['rmse']:.4f}\n")
+                
+                except Exception as e:
+                    import traceback
+                    print(f"  ✗ Error: {str(e)}")
+                    print(f"     Full traceback: {traceback.format_exc()}\n")
+                    result = {
+                        'k': k,
+                        'r': r,
+                        'lamb': lamb,
+                        'correlation': np.nan,
+                        'r2_score': np.nan,
+                        'mse': np.nan,
+                        'rmse': np.nan,
+                        'final_loss': np.nan
+                    }
+                    results.append(result)
+    
+    # Convert to DataFrame
+    results_df = pd.DataFrame(results)
+    
+    # Check if we have any valid results
+    valid_results = results_df[results_df['correlation'].notna()]
+    if len(valid_results) == 0:
+        print("\n" + "="*70)
+        print("ERROR: All training runs failed! Check the errors above.")
+        print("="*70)
+        print("\nCommon issues:")
+        print("1. Data types mismatch - ensure ecogs, xyz_clean, and patient_corr_mat are correct")
+        print("2. Patient index too high - check patient_idx is < number of patients")
+        print("3. Model training failed - check k, r, lambda values are reasonable")
+        print("\nFull results dataframe:")
+        print(results_df)
+        return {
+            'results': results_df,
+            'best_params': None,
+            'best_metrics': None,
+            'all_models': models
+        }
+    
+    # Find best parameters (maximize correlation and R², minimize MSE/RMSE)
+    best_idx = valid_results['correlation'].idxmax()
+    best_params = {
+        'k': int(results_df.loc[best_idx, 'k']),
+        'r': int(results_df.loc[best_idx, 'r']),
+        'lamb': float(results_df.loc[best_idx, 'lamb'])
+    }
+    best_metrics = {
+        'correlation': float(results_df.loc[best_idx, 'correlation']),
+        'r2_score': float(results_df.loc[best_idx, 'r2_score']),
+        'mse': float(results_df.loc[best_idx, 'mse']),
+        'rmse': float(results_df.loc[best_idx, 'rmse']),
+        'final_loss': float(results_df.loc[best_idx, 'final_loss'])
+    }
+    
+    return {
+        'results': results_df,
+        'best_params': best_params,
+        'best_metrics': best_metrics,
+        'all_models': models
+    }
+
+
+def visualize_hyperparameter_results(tuning_results, metric='correlation'):
+    """
+    Visualize hyperparameter tuning results.
+    
+    Args:
+        tuning_results: output from hyperparameter_tuning()
+        metric: which metric to visualize ('correlation', 'r2_score', 'mse', 'rmse')
+    """
+    results_df = tuning_results['results']
+    best_params = tuning_results['best_params']
+    best_metrics = tuning_results['best_metrics']
+    
+    # Check if we have valid results
+    if best_params is None:
+        print("No valid results to visualize - all training runs failed!")
+        return None
+    
+    # Create figure with subplots
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle(f'Hyperparameter Tuning Results\nBest Parameters: k={best_params["k"]}, '
+                 f'r={best_params["r"]}, lamb={best_params["lamb"]:.4f}', 
+                 fontsize=14, fontweight='bold')
+    
+    # 1. Heatmap: k vs r (colored by correlation)
+    ax = axes[0, 0]
+    pivot_corr = results_df.pivot_table(
+        values='correlation',
+        index='r',
+        columns='k',
+        aggfunc='mean'
+    )
+    sns.heatmap(pivot_corr, annot=True, fmt='.3f', cmap='viridis', ax=ax, cbar_kws={'label': 'Correlation'})
+    ax.set_title('Correlation: k vs r (averaged over lambda)')
+    
+    # 2. Heatmap: k vs r (colored by R²)
+    ax = axes[0, 1]
+    pivot_r2 = results_df.pivot_table(
+        values='r2_score',
+        index='r',
+        columns='k',
+        aggfunc='mean'
+    )
+    sns.heatmap(pivot_r2, annot=True, fmt='.3f', cmap='viridis', ax=ax, cbar_kws={'label': 'R² Score'})
+    ax.set_title('R² Score: k vs r (averaged over lambda)')
+    
+    # 3. Heatmap: k vs r (colored by RMSE)
+    ax = axes[1, 0]
+    pivot_rmse = results_df.pivot_table(
+        values='rmse',
+        index='r',
+        columns='k',
+        aggfunc='mean'
+    )
+    sns.heatmap(pivot_rmse, annot=True, fmt='.4f', cmap='viridis_r', ax=ax, cbar_kws={'label': 'RMSE'})
+    ax.set_title('RMSE: k vs r (averaged over lambda)')
+    
+    # 4. Lambda effect on primary metric (correlation)
+    ax = axes[1, 1]
+    for lamb in results_df['lamb'].unique():
+        subset = results_df[results_df['lamb'] == lamb]
+        ax.plot(subset.index, subset['correlation'], marker='o', label=f'λ={lamb:.4f}')
+    ax.set_xlabel('Iteration')
+    ax.set_ylabel('Correlation')
+    ax.set_title('Correlation vs Lambda Values')
+    ax.legend()
+    ax.grid(alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Print summary statistics
+    print("\n" + "="*70)
+    print("HYPERPARAMETER TUNING SUMMARY")
+    print("="*70)
+    print(f"\nBest Parameters:")
+    print(f"  k (neighbors/RBF scale) = {best_params['k']}")
+    print(f"  r (complexity/rank)     = {best_params['r']}")
+    print(f"  λ (regularization)      = {best_params['lamb']:.6f}")
+    
+    print(f"\nBest Model Metrics:")
+    print(f"  Correlation (Pearson):  {best_metrics['correlation']:.6f}")
+    print(f"  R² Score:               {best_metrics['r2_score']:.6f}")
+    print(f"  Mean Squared Error:     {best_metrics['mse']:.6f}")
+    print(f"  Root Mean Squared Error: {best_metrics['rmse']:.6f}")
+    print(f"  Final Training Loss:    {best_metrics['final_loss']:.6f}")
+    
+    print(f"\nAll Results Statistics:")
+    print(results_df.describe())
+    
+    return fig
 
 
 """ this is left over stuff
