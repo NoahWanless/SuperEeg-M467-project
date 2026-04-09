@@ -13,7 +13,12 @@ def car(data):
     data: (time, channels)
     returns: (time, channels)
     """
-    return data - data.mean(axis=0, keepdims=True) 
+    #print("data.shape")
+    #print(data.shape)
+    #print("np.isnan(data)")
+    #print(np.isnan(data).sum())
+    #print(data.mean(axis=1, keepdims=True))
+    return data - data.mean(axis=1, keepdims=True) 
 
 
 def remove_duplicates(ecogs, xyz):
@@ -78,6 +83,36 @@ def get_just_ecog_data(registered_dir = Path("../SuperEeg-M467-project/registere
         ecogs.append(ecog['data'])
     return ecogs
 
+# This function clips the timeseries of the ecog data such that it removes
+# the time from one patient which is very much messed up, shouldnt ruin too much to clip everything
+# if you are ever wondering why its this number, run this line of code after ONLY loading the ecog data in,
+# dont do anything to it:
+# plt.plot(ecogs[7][256000:,10])
+# and you will see why
+def clip_time_series(ecogs,time_cutoff=256000):
+    new_ecogs = []
+    for pat in ecogs:
+        new_ecogs.append(pat[:time_cutoff,:])
+    return new_ecogs
+
+# This function takes the ecogs (and whatever patient you are holding out)
+# and applyes the car function with the special interaction of if we are holding out
+# electrodes, then we apply the car function to the patient those data points WOULD have been in
+# (but not including the held out ones) then subtract that saved mean from the held out ones too
+# If you dont have any held out electrodes, dont put a held_out value in, and itll just regularlly apply the car function
+def apply_car_function(ecogs,held_out=-2):
+    new_ecogs = []
+    for i,pat in enumerate(ecogs):
+        if i == held_out: #if we are at the patient were they(held out electrodes) would in theory have been
+            held_out_car = pat.mean(axis=1, keepdims=True) 
+            new_ecogs.append(car(pat))
+        elif i == held_out+1: #if we are at the electrode were the held out one would have been
+            new_ecogs.append(pat - held_out_car)
+        else: #regular patients
+            new_ecogs.append(car(pat))
+    return new_ecogs
+            
+
 ########### preprocessing: ###########
 # xyz: the output of get_electrode_normalized_loc(), or the list of normalized electrode locations
 # ecogs: the voltage data for all patients, for all electrodes and time
@@ -102,15 +137,16 @@ def preprocessing(ecogs,xyz,notch_size,minus_mean=False):
         n_electrodes = file.shape[1]
         k = kurtosis(file, axis=0)
         good_idx = np.where(k <= 10)[0] #these are local indices
+        if len(good_idx) < 3: #makes sure that at least 3 electrodes exist
+            electrode_offset += n_electrodes #update the offset (still needed even if skipping)
+            print("Warning! a patient with less then 3 electrodes has been found and is being skipped.")
+            continue
         global_good_idx = good_idx + electrode_offset #now these guys are global indices (this is for remembering what positions to keep)
         kept_global_indices.extend(global_good_idx) #concatenate them to the list
         electrode_offset += n_electrodes #update the offset
 
         cleaned_file = file[:, good_idx] #creates the cleaned file 
-        if minus_mean:
-            cleaned.append(car(cleaned_file)) #subtracts the mean if desired
-        else:
-            cleaned.append(cleaned_file)
+        cleaned.append(cleaned_file)
     
     ##### updating all the final elements to return #####
     kept_global_indices = np.array(kept_global_indices) #i dont think the order here matters
