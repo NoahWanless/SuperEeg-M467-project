@@ -86,10 +86,10 @@ def create_lapaican_rbf(xyz_clean,lamb):
 
 
 # This is the objective function defined by Javier, so if you have any questions go to him first
-def object_func(C,U,L,lamb,patient_node_num):
+def object_func(C,U,L,lamb,patient_node_num,num_pat):
     sum = torch.zeros(1,requires_grad=True) 
     iter = 0
-    for i in range(14):
+    for i in range(num_pat):
         c = C[i] #each patient correlation matrix
         num_nodes = patient_node_num[i]
         u = U[iter:iter+num_nodes,:] #all columns of rows iter+num of nodes + 1 
@@ -150,11 +150,11 @@ def create_u(k,r,lamb,patient_corr_mat,xyz_clean,object_func=object_func,trainin
     ############## Training U ##############
     optimizer = geoopt.optim.RiemannianAdam([U], lr=0.01) # adam optmizer that is aware we are stuck on the sphere
     loss_list = []
-    grads = []
+    num_pat = len(patient_corr_mat) #gets the number of patients
     print("Optimizing U")
     for step in tqdm(range(training_steps)):
         optimizer.zero_grad()
-        z = object_func(C,U,L,lamb,patient_node_num) #this is our loss function
+        z = object_func(C,U,L,lamb,patient_node_num,num_pat) #this is our loss function
         loss_list.append(z.detach())
         z.backward()
         optimizer.step()
