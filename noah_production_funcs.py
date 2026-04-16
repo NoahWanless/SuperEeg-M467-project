@@ -32,6 +32,24 @@ U_det, loss = create_u(k=10,r=100,lamb=1,patient_corr_mat=patient_corr_mat,xyz_c
 
 
 
+#gets the xyz location data for just one patient
+def get_1_patient_locations(pat,ecogs,xyz):
+    elec_nums = []
+    for temp in ecogs: #gets the number of electrodes for each patient
+        elec_nums.append(temp.shape[1])
+
+    pat_index_start = 0
+    pat_index_end = 0
+    for i,num in enumerate(elec_nums): #makes the starting and ending indices forthis patient
+        if i < pat: #adds up all the patients before this one to get the starting node (inclusive)
+            pat_index_start += num
+        if i <= pat:#adds up all the patients before this one AND ITSELF to get the ending node (exclusive)
+            pat_index_end += num
+    return xyz[pat_index_start:pat_index_end]
+
+
+
+
 ####### create_lapaican_knn #######
 # xyz_clean: the points to use to make the graph
 # k: how many nearest neighbors to connect points to
