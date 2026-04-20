@@ -14,7 +14,7 @@ class DataLoader:
     def __init__(self,limit,patient,window_size,ecogs,desired_node_iters,elecs_to_hold,xyz,k):
         self.limit = limit #max number of data points we will allow to be generated
         self.current_total_iter = 0
-        self.current_node_iter = 0 #this is the indicated of how many many of this patients electrodes FOR THIS SPECFIC ELECTRODE WE HOLD OUT, have we gone thorugh
+        self.current_node_iter = 0 #this is the indicator of for this electrode we have hold out, how many data points have we generated 
         self.patient = patient
         self.window_size = window_size
         self.desired_node_iters = desired_node_iters #desired number of datapoints we want to make per node (ie number of window slices to make)
@@ -81,6 +81,7 @@ class DataLoader:
                 node_features.append(ecog_masked)
             #if we are dealing with the held out node, replace it with all zeros
             elif i == self.node_held: 
+                
                 node_features.append(np.zeros(self.window_size))
 
                 window_start = self.current_node_iter * self.window_size #make window frame
@@ -91,7 +92,6 @@ class DataLoader:
         node_features = np.array(node_features)
         self.current_total_iter +=1
         self.current_node_iter +=1
-        #[node_features,self.graph_edges,self.graph_weights,node_held]
         return {"features":node_features,"edges":self.graph_edges,"weights":self.graph_weights,"target":node_held}
 
         
