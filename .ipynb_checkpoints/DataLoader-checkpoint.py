@@ -34,20 +34,19 @@ class DataLoader:
         neighbors = NearestNeighbors(n_neighbors=k).fit(xyz)
         distanceofneighbors,indicesofneighbors = neighbors.kneighbors(return_distance=True) #gets the indices of the 10 (or k) neighbors of each node
 
-        # turn indices lists into pairwiase combos
         all_edges = []
         all_edges_weights = []
-        iter = 0 #iter is the node of which we are considering its neightbors
-        for indexs,distances in zip(indicesofneighbors,distanceofneighbors):
-            for num,dist in zip(indexs,distances): #the neighbors of node 'iter'
-                all_edges.append([iter,num])
-                all_edges.append([num,iter]) #adds the edge going the other direction 
-                all_edges_weights.append(dist)#adds the distance twice, because technically two edges exist
-                all_edges_weights.append(dist)
-            iter += 1
-        self.graph_edges = np.array(all_edges)
-        self.graph_weights = np.array(all_edges_weights) 
-
+        seen = set()
+        for node, (nbrs, ds) in enumerate(zip(indicesofneighbors, distanceofneighbors)):
+            for nbr, d in zip(nbrs, ds):
+                pair = (min(node, nbr), max(node, nbr))  # canonical undirected pair
+                if pair not in seen:
+                    seen.add(pair)
+                    all_edges.append([node, nbr])
+                    all_edges_weights.append(d)
+        
+        self.graph_edges   = np.array(all_edges)
+        self.graph_weights = np.array(all_edges_weights)
 
 
     def __iter__(self):
@@ -55,43 +54,36 @@ class DataLoader:
     
 
     def __next__(self):
-        #checks, have we gone over the max datapoints we want to generate
-        if self.current_total_iter >= self.limit: 
+        if self.current_total_iter >= self.limit:
             raise StopIteration
-        #ie we have generated enought points for this electrode so we that we will move on to the next
-        # or have we done wnough window blocks for our purposes
-        if self.desired_node_iters <= self.current_node_iter: 
-            #checks, if this was the last of the nodes we want to hold out, if so, end
-            if self.node_held_index == len(self.elecs_to_hold)-1: 
-                raise StopIteration
-            #otherwise
-            self.current_node_iter = 0 #reset number of datapoints we have made
-            self.node_held_index +=1 #change what electrode we are dealing with (in local list of elecs_to_hold)
-            self.node_held = self.elecs_to_hold[self.node_held_index] #what node we are dealing with in larger list
-        
-        #get the node features
-        # remember: self.current_node_iter determines where in the timeseries we are when times with the window sie
+        if self.current_node_iter >= self.desired_node_iters:
+            raise StopIteration
+    
+        window_start = self.current_node_iter * self.window_size
+        window_end   = window_start + self.window_size
+    
         node_features = []
-        node_held = None
-        for i in range(self.num_nodes): #for each node
-            if i !=self.node_held:  #if its one we dont hold out
-                window_start = self.current_node_iter * self.window_size #make window frame
-                window_end = window_start + self.window_size
-                ecog_masked = self.ecog[window_start:window_end,i] #for this node, we get this window
-                node_features.append(ecog_masked)
-            #if we are dealing with the held out node, replace it with all zeros
-            elif i == self.node_held: 
-                node_features.append(np.zeros(self.window_size))
-
-                window_start = self.current_node_iter * self.window_size #make window frame
-                window_end = window_start + self.window_size
-                node_held = self.ecog[window_start:window_end,i]
-                
-
-        node_features = np.array(node_features)
-        self.current_total_iter +=1
-        self.current_node_iter +=1
-        #[node_features,self.graph_edges,self.graph_weights,node_held]
-        return {"features":node_features,"edges":self.graph_edges,"weights":self.graph_weights,"target":node_held}
+        for i in range(self.num_nodes):
+            if i in self.elecs_to_hold:
+                node_features.append(np.zeros(self.window_size))  # zero out ALL held
+            else:
+                node_features.append(self.ecog[window_start:window_end, i])
+    
+        # targets for ALL held electrodes
+        targets = np.array([
+            self.ecog[window_start:window_end, i] for i in self.elecs_to_hold
+        ])  # [num_held, win_size]
+    
+        self.current_total_iter += 1
+        self.current_node_iter  += 1
+    
+        return {
+            "features":    np.array(node_features),  # [nodes, win_size]
+            "edges":       self.graph_edges,
+            "weights":     self.graph_weights,
+            "target":      targets,                  # [num_held, win_size]
+            "locs":        self.xyz,
+            "elecs_held":  self.elecs_to_hold,       # which indices were zeroed
+        }
 
         
