@@ -83,11 +83,15 @@ def create_lapaican_rbf(xyz_clean,lamb):
 
 
 
-
+#====================================================================================================#
+#====================================================================================================#
+#====================================================================================================#
+#====================================================================================================#
+# Bellow is all the stuff for the first method for finding the correlation matrix, the non convex method
 
 
 # This is the objective function defined by Javier, so if you have any questions go to him first
-def object_func(C,U,L,lamb,patient_node_num,num_pat):
+def object_func_u(C,U,L,lamb,patient_node_num,num_pat):
     sum = torch.zeros(1,requires_grad=True) 
     iter = 0
     for i in range(num_pat):
@@ -125,7 +129,7 @@ def object_func(C,U,L,lamb,patient_node_num,num_pat):
 # https://geoopt.readthedocs.io/en/latest/_modules/geoopt/optim/radam.html#RiemannianAdam
 # https://github.com/pytorch/pytorch/blob/v2.10.0/torch/optim/optimizer.py#L342
 ##############################
-def create_u(k,r,lamb,patient_corr_mat,xyz_clean,object_func=object_func,training_steps=1000,lr=0.01,graph='knn'):
+def create_u(k,r,lamb,patient_corr_mat,xyz_clean,training_steps=1000,lr=0.01,graph='knn'):
     ############## Make Graph ##############
     num_nodes = xyz_clean.shape[0]
     if graph == 'knn':
@@ -149,17 +153,128 @@ def create_u(k,r,lamb,patient_corr_mat,xyz_clean,object_func=object_func,trainin
     # ^ see the above site for more on the manifolds^
     U = geoopt.ManifoldParameter(U_tensor,manifold=sphere) # makes it so the U is contrained to the sphere
     ############## Training U ##############
-    optimizer = geoopt.optim.RiemannianAdam([U], lr=0.01) # adam optmizer that is aware we are stuck on the sphere
+    optimizer = geoopt.optim.RiemannianAdam([U], lr=lr) # adam optmizer that is aware we are stuck on the sphere
     loss_list = []
     num_pat = len(patient_corr_mat) #gets the number of patients
     print("Optimizing U")
     for step in tqdm(range(training_steps)):
         optimizer.zero_grad()
-        z = object_func(C,U,L,lamb,patient_node_num,num_pat) #this is our loss function
+        z = object_func_u(C,U,L,lamb,patient_node_num,num_pat) #this is our loss function
         loss_list.append(z.detach())
         z.backward()
         optimizer.step()
     return U.detach(),loss_list
+
+
+
+
+#====================================================================================================#
+#====================================================================================================#
+#====================================================================================================#
+#====================================================================================================#
+# Bellow is all the stuff for the second method for finding the correlation matrix, ie the convex method
+
+# Projects K to the subspace of matrixs with diagonal 1
+def project_diag(K):
+    K.fill_diagonal_(1)
+    #np.fill_diagonal(K, 1) #works in place
+    return K
+
+# Projects K to the subspace of PSD matrixes
+# Works by performing SVD decmoposition and then replacing egienvalues in the diagonal matrix 
+# with zero if they were orginally less then zero
+def project_psd(K):
+    K_temp = (K + K.T) / 2
+    eigenvalues,eigenvectors = np.linalg.eigh(K_temp) #gets eigen info
+    D = torch.zeros(K.shape)
+    new_eigen  = []
+    for val in eigenvalues: #for eigen values, if its less then zero, make it zero
+        if val > 0:
+            new_eigen.append(val)
+        else:
+            new_eigen.append(0)
+    
+    new_e = torch.tensor(new_eigen, dtype=torch.float32) # then 
+    D.diagonal().copy_(new_e)
+    Q = eigenvectors
+    return Q@D@Q.T
+
+
+# This is the objective function defined by Javier, so if you have any questions go to him first
+# Only a few differences from the other, mainly that we are now dealing with the WHOLE correlation matrix,
+# not just two portions of it
+def object_func_k(C,K,L,lamb,patient_node_num,num_pat):
+    sum = torch.zeros(1,requires_grad=True) 
+    iter = 0
+    for i in range(num_pat):
+        c = C[i] #each patient correlation matrix
+        num_nodes = patient_node_num[i]
+        k = K[iter:iter+num_nodes,iter:iter+num_nodes]
+        sum = sum + (torch.linalg.norm((k - c),ord='fro'))**2 
+        iter = iter + num_nodes
+    sum = sum + lamb*torch.trace(K.T@L@K)
+    return sum
+
+
+
+############## create_k ################ 
+# k: 
+#       the number of nearest neighbors a electrode is 'connected to' if graph='knn'
+#       the scaler for the rbf function if graph='rbf'
+# lamb: the parameter on trace aspect of the loss function
+# xyz_clean: normalized electrode locations on the brain
+# patient_corr_mat: the list of indivdual patient correlation matrices (ONLY containing the nodes they obsevered on them)
+# object_func: the objective function we want to minimize
+# training_steps: number of steps to train the function (usually 500 should be enough, defaults to 1000)
+# lr: learning rate of the optimizer
+# graph: 'knn' or 'rbf' defines what graph set up to use for making the laplacian
+# K_proj_iter: the number of times we try to project K down to the desired subspaces
+######### Returns #########
+# K: this is the big K matrix, it is the correlation matrix itself
+# Loss: this is the list of loss at each step of training to ensure that the function is converging
+def create_k(k,lamb,patient_corr_mat,xyz_clean,training_steps=1000,lr=0.01,graph='knn',K_proj_iter = 20):
+    ############## Make Graph ##############
+    num_nodes = xyz_clean.shape[0]
+    if graph == 'knn':
+        Glaplacian = create_lapaican_knn(xyz_clean,k)
+    elif graph == 'rbf':
+        Glaplacian = create_lapaican_rbf(xyz_clean,k)
+    ############## Preparing function inputs ##############
+    L = torch.tensor(Glaplacian,dtype=torch.float32,requires_grad=False)
+    patient_node_num = [] #number of electrodes each patient has
+    C = []
+    for corr in patient_corr_mat:
+        C.append(torch.tensor(np.array(corr),requires_grad=True))
+        patient_node_num.append(corr.shape[0])
+    ############## Preparing K ##############
+    K = torch.rand((num_nodes,num_nodes),dtype=torch.float32,requires_grad=True)
+    ############## Training U ##############
+    optimizer = torch.optim.Adam([K],lr=lr)
+    loss_list = []
+    num_pat = len(patient_corr_mat) #gets the number of patients
+    print("Optimizing K")
+    for step in tqdm(range(training_steps)): #tqdm
+        optimizer.zero_grad()
+        z = object_func_k(C,K,L,lamb,patient_node_num,num_pat) #this is our loss function
+        #print(z.grad_fn.next_functions)
+        loss_list.append(z.detach())
+        z.backward()
+        optimizer.step()
+        #K_ref = K.detach()
+        with torch.no_grad():
+            for _ in range(K_proj_iter):
+                K.data = project_diag(K)
+                K.data = project_psd(K)
+            #print((K_ref-K).mean()) #or how much has K changed
+        #print(z.detach().mean())    
+            #K = K_det
+    return K.detach(),loss_list
+
+
+
+
+
+
 
 
 
@@ -200,9 +315,11 @@ def single_patient_prediction_pure(patient,ecogs,correlation_matrix):
     row_means = np.mean(Y, axis=0, keepdims=True)
     row_stds = np.std(Y, axis=0, keepdims=True)
     Y_z_score = (Y - row_means) / row_stds #turns them into there z_score for each value in the data
+
     ######################## this gets everything for this patient ########################
     if torch.is_tensor(correlation_matrix):
         correlation_matrix = correlation_matrix.numpy()
+
     patient_node_start = 0  #these are where this patients electrodes would start and end in the correlation matrix
     patient_node_end = -1 #!THESE ARE INCLUSIVE VALUES, BOTH OF THEM
     indices_we_pred = []
@@ -221,6 +338,7 @@ def single_patient_prediction_pure(patient,ecogs,correlation_matrix):
     for i in range(correlation_matrix.shape[0]): #for each electrode
         if i < patient_node_start or i > patient_node_end:
             indices_we_pred.append(i) #these are the ones we are prediciting
+
     ################ Building the resources to actually use the forumla ################
     K_patient = correlation_matrix[:,patient_node_start:patient_node_end+1] #this gets all the electrodes that the patient has with their own correlation and that of others
     Kalpha_alpha = K_patient[patient_node_start:patient_node_end+1,:]
@@ -297,22 +415,4 @@ def u_metric_display(U_det,cleaned,file_held,loss):
 
 
 
-""" this is left over stuff
-num_nodes = xyz_clean.shape[0] #649
-    neigh = NearestNeighbors(n_neighbors=k).fit(xyz_clean)
-    indicesofneigh = neigh.kneighbors()[1] #gets the indices of the 10 (or k) neighbors of each node
-    # turn indices lists into pairwiase combos
-    all_edges = []
-    iter = 0
-    for indexs in indicesofneigh:
-        for num in indexs:
-            all_edges.append((iter,num))
-        iter += 1
-    G = nx.Graph()
-    nodes = np.arange(num_nodes)
-    G.add_nodes_from(nodes)
-    G.add_edges_from(all_edges)
-    Glaplacian = nx.linalg.laplacian_matrix(G).toarray()
-
-"""
 

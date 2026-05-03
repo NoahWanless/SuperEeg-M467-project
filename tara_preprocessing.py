@@ -51,7 +51,7 @@ def remove_duplicates(ecogs, xyz):
 # takes in the directory path (if given) to the regester outputs and grabs all the 
 # patients electrode locations
 def get_electrode_normalized_loc(registered_dir = Path("../SuperEeg-M467-project/registered_outputs")):
-    registered_dir = Path("../SuperEeg-M467-project/registered_outputs")
+    #registered_dir = Path("../SuperEeg-M467-project/registered_outputs")
     #locs_root = Path("../faces_basic/locs")
     npy_files = sorted(registered_dir.glob("*_xslocs_registered_mm.npy")) # Same sorted order as registration code
     ecogs_list_loc = []
@@ -68,7 +68,7 @@ def get_electrode_normalized_loc(registered_dir = Path("../SuperEeg-M467-project
 # data_root: the directory where the voltage data lives
 # we return ONLY THE VOLTAGE DATA, not the corresponding stimulus data
 def get_just_ecog_data(registered_dir = Path("../SuperEeg-M467-project/registered_outputs"),data_root = Path("../faces_basic/data")):
-    registered_dir = Path("../SuperEeg-M467-project/registered_outputs")
+    #registered_dir = Path("../SuperEeg-M467-project/registered_outputs")
     npy_files = sorted(registered_dir.glob("*_xslocs_registered_mm.npy")) # Same sorted order as registration code
     print(npy_files)
     patient_ids = [f.name.split("_")[0] for f in npy_files] # Same sorted patient order as everything else
@@ -199,7 +199,7 @@ def hold_out(xyz_data,ecog_data,pat_hold,elecs_to_hold):
         if i <= pat_hold:
             location_offset+=cleaned[i].shape[1] #adds the number of electrodes
     xyz_clean = np.insert(xyz_clean,location_offset,values=locations_held,axis=0)
-    return cleaned,xyz_clean,location_offset
+    return cleaned,xyz_clean,location_offset,held_out_elcs
     
 
 # All three inputs are part of the outputs of the full_preprocessing() function

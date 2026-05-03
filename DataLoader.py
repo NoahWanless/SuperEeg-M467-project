@@ -40,10 +40,14 @@ class DataLoader:
         iter = 0 #iter is the node of which we are considering its neightbors
         for indexs,distances in zip(indicesofneighbors,distanceofneighbors):
             for num,dist in zip(indexs,distances): #the neighbors of node 'iter'
-                all_edges.append([iter,num])
-                all_edges.append([num,iter]) #adds the edge going the other direction 
-                all_edges_weights.append(dist)#adds the distance twice, because technically two edges exist
-                all_edges_weights.append(dist)
+                if iter in elecs_to_hold:#element 0 is the source, the 1 is the target
+                    all_edges.append([num,iter]) #ie, we only have a egde going INTO the held out electrode, not out from it
+                    all_edges_weights.append(dist)
+                else:
+                    all_edges.append([iter,num])
+                    all_edges.append([num,iter]) #adds the edge going the other direction 
+                    all_edges_weights.append(dist)#adds the distance twice, because technically two edges exist
+                    all_edges_weights.append(dist)
             iter += 1
         self.graph_edges = np.array(all_edges)
         self.graph_weights = np.array(all_edges_weights) 
