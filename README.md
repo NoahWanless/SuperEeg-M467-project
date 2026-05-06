@@ -13,8 +13,6 @@ preprocessing methods: either 'tara_preprocessing.py' <- (go here first, this ha
 
 
 
-
-
 ## Preprocessing:
 There are several steps in the preprocessing process, not all are necessary, but most are. 
 If you would like to see the implemenation of these functions go to the 'tara_preprocessing.py' file. There you will find all the functions used in the below processes
@@ -28,6 +26,7 @@ registered_dir = Path("../SuperEeg-M467-project/registered_outputs")
 ecogs = get_just_ecog_data(registered_dir,data_root)
 xyz = get_electrode_normalized_loc(registered_dir)
 '''
+
 
 The above steps load in the nii normalized brain locations (from the registered_outputs directory), and the ecog data itself (taken from the faces_basic project) these have the following shapes:
 ecogs.shape = (patients,time,number of electrodes)
