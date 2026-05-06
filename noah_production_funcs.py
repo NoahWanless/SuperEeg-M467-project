@@ -308,7 +308,7 @@ pred,y_real = single_patient_prediction(0,5,15,ecogs,correlation_matrix)
 # note this is the version that does NOT hold anything out of the function and calcuations
 ########### Returns: ###########
 # indices_we_pred: the global indices of what electrodes we are predicting
-# 
+# pred the actual predictions themselves
 def single_patient_prediction_pure(patient,ecogs,correlation_matrix):
     #########he correlation of the observed and unobserved datapoints #########
     Y = ecogs[patient] #gets this paitents data
