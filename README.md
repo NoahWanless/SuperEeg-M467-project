@@ -22,12 +22,12 @@ If you would like to see the implemenation of these functions go to the 'tara_pr
 
 Here is a overview of what each step in the process does:
 
-''
+'''
 data_root = Path("/Users/noahwanless/Desktop/Spring2026/M467/faces_basic/data")
 registered_dir = Path("../SuperEeg-M467-project/registered_outputs")
 ecogs = get_just_ecog_data(registered_dir,data_root)
 xyz = get_electrode_normalized_loc(registered_dir)
-''
+'''
 
 The above steps load in the nii normalized brain locations (from the registered_outputs directory), and the ecog data itself (taken from the faces_basic project) these have the following shapes:
 ecogs.shape = (patients,time,number of electrodes)
