@@ -7,6 +7,40 @@ import geoopt
 import tqdm
 from sklearn.neighbors import NearestNeighbors
 
+#DataLoader class
+'''
+The goal of this is to make a object that takes in the electrode data, and makes a iterator object that will output 'data points'
+or graph and ecog data pairs for a particular patient.
+
+Another function found in 'noah_production_funcs_2.py' will string several of these together and randomly sample from them
+
+In the init method the 'graph' for this paitent will be made. Where nodes are connected by them being connected to there k nearest neighbors.
+This is stored as a edges and a edge weights list of the following form. 
+
+Edges(NOTE these are DIRECTIONAL edges, ie to make it a undirected graph duplicate a edge and flip it around\):
+[
+[1,0], 
+[2,4],
+[4,5],
+...
+[Source node,Target node]
+]
+
+{Both Edges and Edge Weights have the same size 0th dimension}
+
+Edge weights:
+[1,3,4,5,...]
+
+We also give it edge features list, or a ecog window of data for each node, itll have this shape
+
+(number_nodes,ecog_window_size)
+Where one of the nodes has its ecog window zeroed out. This is the node we are trying to predict for.
+
+Then when the next method is called, we get all this information, and move on to the next data point.
+
+We do this by making a data point by holding each electrode in a patients brain one by one, and do this for 
+however many ecog windows you want to make.
+'''
 
 
 class DataLoader:
