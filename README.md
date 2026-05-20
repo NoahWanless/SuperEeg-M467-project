@@ -1,17 +1,29 @@
 # SuperEeg-M467-project
 Project for M467/M567 class on based on the SuperEeg paper using Ecog data
 
+There are several files containing a collection of functions in this project, here are what they contain.
 
-If you are searching for something go to the following places:
+* noah_production_funcs_2.py
 
-single patient prediction: go to 'noad_production_funcs.py'
+This contains functions meant to support the use of the DataLoader class for use in training.
 
-new method of making U matrix: go to 'noad_production_funcs.py'
+* noah_production_funcs_1.py
 
-preprocessing methods: either 'tara_preprocessing.py' <- (go here first, this has the better and more commonly used methods)
+This contains most of the functions for things unrelated to preprocessing. Including objective functions, the creation and training of the U and K matrix's, the creation of graphs of the brain based on 'knn' of 'rbf' methods, prediction methods when using the full correlation matrix and functions to project down to certain subspaces. For more information go check those out
 
+* DataLoader.py
 
+This is the class implementaion of the DataLoader object which is a iterator meant to effective feed the gnn models datapoints that are partially precomputed in a time effective manner.
 
+* tara_preprocessing.py
+
+All preprocessing functions.
+
+* helpers.py
+
+These are functions that Rusty made for his code in the Registaration_Example.ipynb Notebook, go see that notebook for more.
+
+These are files that contain functions that are used in the notebooks that actually bring things together
 
 ## Preprocessing:
 There are several steps in the preprocessing process, not all are necessary, but most are. 
